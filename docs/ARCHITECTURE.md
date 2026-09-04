@@ -1,13 +1,15 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 6 — real OpenWorld Reactor auth + validation + state model.**
-See `docs/OPENWORLD_REACTOR_INTEGRATION.md` for the full Phase 6 findings —
-OpenWorld Reactor is confirmed to be Reactor (reactor.inc)/LingBot (Ant
-Group), real authentication was verified against the live API, but the
-product's actual shape (a live steerable video session, not a one-shot
-world-description generator) means full generation integration is a
-deliberately deferred, separately-scoped decision, not implemented yet.
-This document is the
+Status: **Phase 7 — AI World Designer is now the authoritative source of
+world content.** Following the Phase 6.5 investigation
+(`docs/REACTOR_TO_UNITY_ARCHITECTURE.md`) confirming OpenWorld Reactor
+cannot supply structured/3D world data in any form, the architecture
+changed: a general-purpose LLM (`IWorldDesigner`) interprets the prompt
+directly into `WorldSpecification`. OpenWorld Reactor's integration code is
+kept, isolated, and demoted to an optional, non-authoritative future visual
+layer — see `docs/AI_WORLD_DESIGNER.md` for the full reasoning and
+`docs/OPENWORLD_REACTOR_INTEGRATION.md` for what was verified about
+Reactor itself. This document is the
 contract the rest of the project is built against. Update it when a phase
 changes a decision made here; don't let code and doc drift apart.
 
@@ -66,23 +68,15 @@ this leaves pending real OpenWorld Reactor access).
 │  Assets/Scripts/UI                                                   │
 │  PromptInputUI · GenerationUI · FPVHUD · TelemetryUI                 │
 └───────────────┬────────────────────────────────────────┬────────────┘
-                │ WorldGenerationRequest (full prompt)   │ reads telemetry
+                │ WorldDesignRequest (full prompt)       │ reads telemetry
                 ▼                                          │
-┌─────────────────────────────┐                            │
-│           AI Layer            │                           │
-│  Assets/Scripts/AI            │                           │
-│  IWorldGenerationService      │                           │
-│  Mock / OpenWorldReactor / ...│                           │
-└───────────────┬───────────────┘                           │
-                │ ReactorWorldResult (backend-native — structured          │
-                │ data and/or a native scene/asset reference)   │
-                ▼                                            │
-┌─────────────────────────────┐                            │
-│         Adapter Layer         │                           │
-│  Assets/Scripts/WorldGeneration/Adapters                   │
-│  ReactorWorldAdapter → WorldSpecification                   │
-└───────────────┬───────────────┘                            │
-                │ WorldSpecification (untrusted)             │
+┌─────────────────────────────────┐                        │
+│      AI World Design Layer         │                     │
+│  Assets/Scripts/AI/WorldDesign      │  ← authoritative     │
+│  IWorldDesigner                     │    since Phase 7     │
+│  Mock / LLMWorldDesigner(ILLMClient)│                     │
+└───────────────┬─────────────────────┘                     │
+                │ WorldSpecification (raw, unvalidated)      │
                 ▼                                            │
 ┌─────────────────────────────────────────────────────────┐ │
 │              Validation Layer                             │ │
@@ -118,26 +112,46 @@ this leaves pending real OpenWorld Reactor access).
 
 Cross-cutting:
   Assets/Scripts/WorldGeneration/Persistence  — WorldSaveData, save/load
-  Assets/Scripts/Core                          — GameEvents, ServiceLocator, GenerationPipeline
-  Assets/Scripts/Utilities                     — deterministic RNG, math helpers
+  Assets/Scripts/Core                          — WorldGenerationController (Reactor-pipeline
+                                                  state machine, Phase 6) + still-pending
+                                                  GameEvents/ServiceLocator
+  Assets/Scripts/Utilities                     — StableHash, deterministic RNG, math helpers
+
+Isolated, optional, non-authoritative (kept per explicit instruction — not
+deleted, not wired into anything above):
+  Assets/Scripts/AI                            — IWorldGenerationService, OpenWorldReactor*,
+                                                  ReactorWorldResult/Adapter (Phases 5-6).
+                                                  Nothing above depends on this; it does not
+                                                  depend on Sim.AI.WorldDesign either. See
+                                                  docs/AI_WORLD_DESIGNER.md "Future Reactor
+                                                  video integration".
 ```
 
 ## 3. Data flow (end to end)
 
 1. User types a prompt in `PromptInputUI` and clicks **Generate World**.
-2. `GenerationUI` calls `WorldGenerationController` (Core), which owns the
-   pipeline state machine and keeps the UI responsive (async, see §7).
-3. The raw prompt (+ seed/scale/optional prior spec, for "regenerate with a
-   tweak") is wrapped, **unmodified**, into a `WorldGenerationRequest`. No
-   step before the backend call reduces the prompt to a fixed parameter set.
-4. The active `IWorldGenerationService` (Mock, OpenWorldReactor, ...) sends
-   the request and returns a `WorldGenerationOutcome` wrapping either a
-   `ReactorWorldResult` or a failure reason.
-5. `ReactorWorldAdapter` converts `ReactorWorldResult` → `WorldSpecification`.
-   This is the only place the backend's native representation is translated
-   into Unity's normalized contract — see `docs/WORLD_SPECIFICATION.md` for
-   why this is a separate step rather than the backend returning
-   `WorldSpecification` directly.
+2. A future orchestration point (analogous to `WorldGenerationController`,
+   Phase 6, but not yet built for this pipeline — see
+   docs/AI_WORLD_DESIGNER.md "What Phase 7 deliberately does not include")
+   will keep the UI responsive (async, see §7).
+3. The raw prompt (+ optional seed/constraints) is wrapped, **unmodified**,
+   into a `WorldDesignRequest`. No step before the designer call reduces
+   the prompt to a fixed parameter set.
+4. The active `IWorldDesigner` (`MockWorldDesigner`, or `LLMWorldDesigner`
+   backed by an `ILLMClient` — OpenAI/Claude/local, Phase 7) sends the
+   request and returns a `WorldDesignOutcome` wrapping either a raw
+   `WorldSpecification` or a failure reason. For `LLMWorldDesigner`, the
+   LLM is instructed to interpret the *entire* prompt directly into
+   `WorldSpecification`-shaped JSON, parsed via
+   `WorldSpecificationJsonParser` — see docs/AI_WORLD_DESIGNER.md for the
+   full request/response flow and its security boundary (never executes
+   AI-generated code — deserializes into known data types only).
+5. *(Historical, Phases 5-6, not part of the current pipeline)*
+   `ReactorWorldAdapter` converted a `ReactorWorldResult` →
+   `WorldSpecification` for the OpenWorld Reactor backend. Superseded as
+   the authoritative path once Phase 6.5 established Reactor cannot supply
+   structured world data — see docs/AI_WORLD_DESIGNER.md "Future Reactor
+   video integration". The code remains, isolated and optional.
 6. `WorldSpecificationValidator` checks the resulting spec against hard limits
    (`docs/WORLD_GENERATION.md` §Limits) and clamps/repairs recoverable
    issues (e.g. missing seed → generate one; tree count over max → clamp).
@@ -160,17 +174,23 @@ Cross-cutting:
 Assets/
   Scenes/
   Scripts/
-    AI/                         Agent 5 — provider-agnostic AI client
-                                 (IWorldGenerationService, WorldGenerationOutcome,
+    AI/                         Agent 5 — Reactor-facing client (Phases 5-6), now isolated
+                                 and optional (IWorldGenerationService, WorldGenerationOutcome,
                                  MockWorldGenerationService, OpenWorldReactorWorldGenerationService)
+      WorldDesign/                 Agent 5, Phase 7 — the AUTHORITATIVE AI world-content
+                                 pipeline (IWorldDesigner, WorldDesignRequest/Outcome,
+                                 MockWorldDesigner, LLMWorldDesigner, ILLMClient +
+                                 OpenAi/Anthropic/LocalLLMClient, WorldSpecificationJsonParser)
     Drone/                      Agent 2 — Rigidbody flight
     Camera/                     Agent 3 — FPV camera rig
     UI/                         Agent 3 + 11 — HUD, OSD, prompt/generation UI
     WorldGeneration/
-      Models/                   Agent 4 — WorldGenerationRequest, ReactorWorldResult,
-                                 WorldSpecification and its sub-models (see
-                                 docs/WORLD_SPECIFICATION.md)
-      Adapters/                  Agent 4/5 — ReactorWorldAdapter: ReactorWorldResult -> WorldSpecification
+      Models/                   Agent 4 — WorldSpecification and its sub-models, including
+                                 CourseSpecification (Phase 7); ReactorWorldResult (Phase 5,
+                                 now only used by the isolated Assets/Scripts/AI/ Reactor path)
+                                 — see docs/AI_WORLD_DESIGNER.md, docs/WORLD_SPECIFICATION.md
+      Adapters/                  Agent 4/5 — ReactorWorldAdapter (Phase 5, isolated Reactor
+                                 path only — see docs/AI_WORLD_DESIGNER.md)
       Validation/                Agent 6 — limits + repair (real logic since Phase 6)
       Terrain/                   Agent 8 — terrain algorithms
       Environment/                Agent 9 — prefab placement, PrefabRegistry
@@ -190,14 +210,17 @@ Assets/
     PlayMode/                   Agent 14 — drone controls, generation end-to-end
 docs/
   ARCHITECTURE.md               this file
-  WORLD_SPECIFICATION.md        prompt -> OpenWorld Reactor -> adapter -> WorldSpecification
-                                 pipeline, what Unity owns vs. what Reactor owns
+  AI_WORLD_DESIGNER.md          Phase 7 — current pipeline: LLM World Designer is now
+                                 authoritative; WorldSpecification/Course additions; provider
+                                 abstraction; JSON validation/security; Reactor's optional role
+  WORLD_SPECIFICATION.md        Phase 5 pipeline design (historical framing — see
+                                 AI_WORLD_DESIGNER.md for what's current); what Unity owns
   OPENWORLD_REACTOR_INTEGRATION.md  Phase 6: real Reactor identification/auth findings,
                                  what's verified vs. deferred, credential handling
   REACTOR_TO_UNITY_ARCHITECTURE.md  Phase 6.5: can any Reactor model give Unity a
                                  flyable 3D world? (No.) Options A-D, recommendation.
-  WORLD_GENERATION.md           spec schema + validation limits (Phase 6+)
-  AI_INTEGRATION.md             provider contract, superseded by OPENWORLD_REACTOR_INTEGRATION.md
+  WORLD_GENERATION.md           spec schema + validation limits (still pending — Phase 8+)
+  AI_INTEGRATION.md             superseded by OPENWORLD_REACTOR_INTEGRATION.md / AI_WORLD_DESIGNER.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
   FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
 ```
@@ -235,7 +258,14 @@ Each stage is a small class with one job, so terrain/environment/obstacle
 algorithms are swappable without touching the orchestrator (`WorldGenerator`
 depends on interfaces — `ITerrainGenerator`, etc. — not concrete classes).
 
-## 6. AI ↔ Unity communication
+## 6. AI ↔ Unity communication (historical — Reactor pipeline, isolated since Phase 7)
+
+**This section describes the Phase 5-6 Reactor-facing pipeline
+(`Assets/Scripts/AI/`), kept in the codebase but no longer authoritative or
+wired into anything — see §6a and `docs/AI_WORLD_DESIGNER.md` for the
+current pipeline (`Assets/Scripts/AI/WorldDesign/`).** Left as-is below
+rather than rewritten, since it remains an accurate description of that
+isolated code.
 
 **OpenWorld Reactor is the intended world-generation backend.** Phase 5
 looked for an actual OpenWorld Reactor SDK, API, configuration, or
@@ -341,6 +371,25 @@ real `WorldSpecificationValidator` logic, and the
 `WorldGenerationController` state machine described in §7 below (previously
 documented as a design intent, not yet built until this phase).
 
+## 6b. Phase 7: the architecture pivot — AI World Designer is now authoritative
+
+Following the user's explicit acceptance of Phase 6.5's Option D finding,
+the architecture changed: **OpenWorld Reactor is not, and will not become,
+the source of world geometry.** A general-purpose LLM
+(`IWorldDesigner` — `Assets/Scripts/AI/WorldDesign/`) interprets the prompt
+directly into `WorldSpecification`, replacing `IWorldGenerationService`/
+`ReactorWorldAdapter` as the authoritative path. This is the concrete
+"different intelligence source" §6a's second-order finding said would be
+needed.
+
+The Reactor-facing code described in §6/§6a is **not deleted** — it remains
+in the codebase, fully isolated (`Sim.AI.WorldDesign` has no reference to
+it, and it has none to `Sim.AI.WorldDesign`), documented as a possible
+future non-authoritative visual layer only. Full reasoning, the new
+provider abstraction (`ILLMClient` — OpenAI/Claude/local, none configured
+yet), the `WorldSpecification.Course` addition, and the JSON-deserialization
+security boundary are in `docs/AI_WORLD_DESIGNER.md`.
+
 ## 7. Error handling strategy
 
 | Failure point | Behaviour |
@@ -374,8 +423,8 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 1 | Architect | This document, folder structure, cross-cutting interfaces |
 | 2 | FPV Flight Engineer | `Scripts/Drone/*` |
 | 3 | FPV Camera + OSD Engineer | `Scripts/Camera/*`, `Scripts/UI/FPVHUD.cs`, `TelemetryUI.cs` |
-| 4 | AI World Designer | `Scripts/WorldGeneration/Models/*`, `Scripts/WorldGeneration/Adapters/*` |
-| 5 | AI Integration Engineer | `Scripts/AI/*` |
+| 4 | AI World Designer | `Scripts/WorldGeneration/Models/*` (incl. `CourseSpecification`, Phase 7), `Scripts/WorldGeneration/Adapters/*` (Reactor-only, isolated) |
+| 5 | AI Integration Engineer | `Scripts/AI/WorldDesign/*` (authoritative, Phase 7) — `Scripts/AI/*` (Reactor client, Phases 5-6) is isolated/optional |
 | 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (real logic since Phase 6 — `WorldSpecificationValidator`, `WorldGenerationLimits`) |
 | 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs` |
 | 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` |

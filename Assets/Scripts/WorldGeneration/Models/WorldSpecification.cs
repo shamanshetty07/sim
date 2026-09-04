@@ -4,16 +4,19 @@ namespace Sim.WorldGeneration.Models
 {
     /// <summary>
     /// Unity's own normalized, bounded description of what to build — the *only* input type
-    /// WorldGenerator (Phase 7+) accepts, always after validation.
+    /// WorldGenerator (still not implemented — see docs/IMPLEMENTATION_PLAN.md) will accept,
+    /// always after validation.
     ///
-    /// This is deliberately NOT a claim about what OpenWorld Reactor natively generates.
-    /// Earlier design assumed the AI layer's job was to hand back something that already
-    /// looked like this. That's now explicit as false: OpenWorld Reactor's real output is
-    /// unknown (see docs/WORLD_SPECIFICATION.md), and ReactorWorldAdapter is the one place
-    /// that translates whatever it does return into this shape. If Reactor turns out to
-    /// generate richer content than this can express, the answer is to extend this type or
-    /// carry a native reference alongside it (see ReactorWorldResult.NativeAssetReference) —
-    /// not to force everything through a smaller, lossy model just because it existed first.
+    /// As of Phase 7, the authoritative producer of this type is the AI World Designer
+    /// (<c>IWorldDesigner</c> — a general-purpose LLM interpreting the prompt directly into
+    /// this shape), not OpenWorld Reactor: Reactor's real API was found (Phase 6.5,
+    /// docs/REACTOR_TO_UNITY_ARCHITECTURE.md) to expose only live video, with no structured
+    /// world data of any kind to adapt. <c>ReactorWorldAdapter</c>/<c>ReactorWorldResult</c>
+    /// remain in the codebase (Reactor's future role is an optional, non-authoritative visual
+    /// layer — see docs/AI_WORLD_DESIGNER.md), but they are no longer this type's primary
+    /// source. If either producer turns out to generate richer content than this can express,
+    /// the answer is to extend this type — not to force everything through a smaller, lossy
+    /// model just because it existed first.
     ///
     /// <see cref="OriginalPrompt"/> is carried on every instance specifically so the prompt
     /// that produced a world is never lost between generation and save/load — it is not
@@ -39,6 +42,9 @@ namespace Sim.WorldGeneration.Models
         public List<ObjectSpecification> EnvironmentObjects { get; set; } = new List<ObjectSpecification>();
 
         public List<ObstacleSpecification> Obstacles { get; set; } = new List<ObstacleSpecification>();
+
+        /// <summary>Race/gameplay-course intent (style, difficulty, gate count, section narrative) — see CourseSpecification remarks.</summary>
+        public CourseSpecification Course { get; set; } = new CourseSpecification();
 
         public WeatherSpecification Weather { get; set; } = new WeatherSpecification();
         public LightingSpecification Lighting { get; set; } = new LightingSpecification();

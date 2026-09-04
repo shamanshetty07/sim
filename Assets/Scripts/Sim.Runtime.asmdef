@@ -3,6 +3,7 @@
     "rootNamespace": "",
     "references": [
         "Unity.InputSystem",
+        "Unity.Newtonsoft.Json",
         "Unity.TextMeshPro",
         "UnityEngine.UI"
     ],

@@ -59,6 +59,7 @@ namespace Sim.WorldGeneration.Validation
             ValidateLighting(specification, errors);
             ValidateSpawn(specification, errors);
             ValidateFlight(specification, errors);
+            ValidateCourse(specification, errors);
 
             bool hasBlockingError = errors.Exists(e => e.Severity == ValidationSeverity.Error);
             return new ValidationResult
@@ -299,6 +300,41 @@ namespace Sim.WorldGeneration.Validation
             spec.Flight.TightnessScore01 = ClampField(spec.Flight.TightnessScore01, "Flight.TightnessScore01", errors);
             spec.Flight.ObstacleDensity01 = ClampField(spec.Flight.ObstacleDensity01, "Flight.ObstacleDensity01", errors);
             spec.Flight.VerticalityScore01 = ClampField(spec.Flight.VerticalityScore01, "Flight.VerticalityScore01", errors);
+        }
+
+        private static void ValidateCourse(WorldSpecification spec, List<ValidationError> errors)
+        {
+            if (spec.Course == null)
+            {
+                spec.Course = new CourseSpecification();
+                errors.Add(Warning("Course", "CourseSpecification was null; substituted defaults."));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(spec.Course.Style))
+            {
+                spec.Course.Style = "freestyle";
+                errors.Add(Warning("Course.Style", "Empty style defaulted to 'freestyle'."));
+            }
+
+            if (string.IsNullOrWhiteSpace(spec.Course.Difficulty))
+            {
+                spec.Course.Difficulty = "medium";
+                errors.Add(Warning("Course.Difficulty", "Empty difficulty defaulted to 'medium'."));
+            }
+
+            if (spec.Course.GateCount < 0)
+            {
+                errors.Add(Warning("Course.GateCount", $"Negative gate count ({spec.Course.GateCount}) clamped to 0."));
+                spec.Course.GateCount = 0;
+            }
+            else if (spec.Course.GateCount > WorldGenerationLimits.MaxObstacleCount)
+            {
+                errors.Add(Warning("Course.GateCount", $"GateCount {spec.Course.GateCount} exceeds the obstacle limit; clamped to {WorldGenerationLimits.MaxObstacleCount}."));
+                spec.Course.GateCount = WorldGenerationLimits.MaxObstacleCount;
+            }
+
+            spec.Course.SectionDescriptions ??= new List<string>();
         }
 
         private static float ClampField(float value, string field, List<ValidationError> errors)

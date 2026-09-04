@@ -13,14 +13,20 @@ check it before assuming a phase needs to start from scratch.
 | 5 | World-generation data contracts (prompt-driven, OpenWorld Reactor-shaped) | ✅ Done — `WorldGenerationRequest`, `IWorldGenerationService`, `ReactorWorldResult`, `ReactorWorldAdapter`, re-scoped `WorldSpecification`, EditMode tests. No real Reactor integration (none available to inspect). Unverified in a live Editor. |
 | 6 | Real OpenWorld Reactor auth + validation logic + state model | ✅ Done — see below. Real API key provided; identified OpenWorld Reactor as Reactor (reactor.inc)/LingBot (Ant Group) via public docs; verified real authentication with a live, successful API call. Full generation integration deferred (deliberate, user-confirmed) — see docs/OPENWORLD_REACTOR_INTEGRATION.md. |
 | 6.5 | Investigate whether any Reactor model can give Unity a usable 3D world | ✅ Done — checked all 8 hosted models. None export mesh/point-cloud/depth/GLTF/USD/FBX or structured scene state; video-only across the platform. See docs/REACTOR_TO_UNITY_ARCHITECTURE.md. Recommendation given (Option D diagnosis → Option C path); implementation not started, awaiting user direction. |
-| 7 | Unity-side procedural world construction (`WorldGenerator`) | ⬜ Not started — scope now informed by 6.5's finding that Reactor cannot supply world content in any form (not just non-3D); still needs a decision on where prompt-interpretation "intelligence" comes from before content-generation logic can be written |
-| 8 | Prompt UI | ⬜ Not started |
-| 9 | Procedural terrain | ⬜ Not started |
-| 10 | Environment objects | ⬜ Not started |
-| 11 | Racing obstacles | ⬜ Not started |
-| 12 | Save/load | ⬜ Not started |
-| 13 | Performance optimization | ⬜ Not started |
-| 14 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
+| 7 | AI World Designer + WorldSpecification generation | ✅ Done — `IWorldDesigner`/`WorldDesignRequest`/`WorldDesignOutcome`, `MockWorldDesigner` (rich, deterministic, non-interpretive), `LLMWorldDesigner` + `ILLMClient` (OpenAI/Anthropic/Local — all honest stubs, none configured), `WorldSpecificationJsonParser` (Newtonsoft.Json, `TypeNameHandling.None`), new `CourseSpecification` model. Answers 6.5's "where does the intelligence come from" question. See docs/AI_WORLD_DESIGNER.md. |
+| 8 | Unity-side procedural world construction (`WorldGenerator`) | ⬜ Not started — this is what phase 7 was provisionally labeled before the architecture pivot; renumbered here to make room for the AI World Designer phase the pivot required first |
+| 9 | Prompt UI | ⬜ Not started |
+| 10 | Procedural terrain | ⬜ Not started |
+| 11 | Environment objects | ⬜ Not started |
+| 12 | Racing obstacles | ⬜ Not started |
+| 13 | Save/load | ⬜ Not started |
+| 14 | Performance optimization | ⬜ Not started |
+| 15 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
+
+Numbering has diverged from the original 14-phase brief (the 6.5
+investigation and this phase's architecture pivot both required insertions
+the original plan didn't anticipate) — treat the descriptions as
+authoritative, not the specific numbers.
 
 ## Phase 3 detail
 
@@ -183,6 +189,56 @@ guarded cancellation against a stale/superseded call overwriting a newer
 one's state, but the same protection was missing from the
 success/failure/validation branches — fixed by applying one consistent
 `IsCurrent(token)` guard everywhere shared state is mutated.
+
+## Phase 7 detail
+
+User accepted Phase 6.5's Option D finding and directed an architecture
+change: OpenWorld Reactor/LingBot is not, and will not become, the source
+of world geometry. Instead, a general-purpose LLM interprets the prompt
+directly into `WorldSpecification`. Explicit instruction: keep the
+Reactor code, isolated, not deleted; do not make the Unity generator
+depend on it.
+
+Files added under `Assets/Scripts/AI/WorldDesign/` (new folder, deliberately
+separate from `Assets/Scripts/AI/`'s existing Reactor-facing types —
+neither namespace references the other): `IWorldDesigner.cs`,
+`WorldDesignRequest.cs`, `WorldDesignConstraints.cs`, `WorldDesignOutcome.cs`,
+`WorldDesignFailureReason.cs`, `MockWorldDesigner.cs` (rich fully-populated
+example, deterministic, still honestly non-interpretive — same reasoning
+as `MockWorldGenerationService`), `ILLMClient.cs` +
+`LLMCompletionRequest/Result.cs` (the actual provider-swap abstraction —
+one `LLMWorldDesigner` with all prompt-engineering/JSON-handling logic
+written once, rather than duplicating it across parallel
+OpenAI/Claude/LocalWorldDesigner classes; see docs/AI_WORLD_DESIGNER.md for
+why), `LLMWorldDesigner.cs`, `IWorldSpecificationJsonParser.cs` +
+`WorldSpecificationJsonParser.cs` (Newtonsoft.Json with explicit
+`TypeNameHandling.None` — the concrete "never execute AI-generated code"
+boundary), `LLMNotConfiguredException.cs`, and three `ILLMClient` stubs
+(`OpenAiLLMClient`, `AnthropicLLMClient`, `LocalLLMClient`) — none make a
+real network call; no credentials for any of the three exist in this
+environment, per this phase's explicit "only implement once configured"
+instruction.
+
+Added `CourseSpecification.cs` (`WorldSpecification.Course`) — style,
+difficulty, gate count, ordered section narrative — directly answering the
+brief's own example of intent a flat object-count model can't express.
+Extended `WorldSpecificationValidator` with a matching `ValidateCourse`.
+Extracted `Sim.Utilities.StableHash` (FNV-1a) from
+`MockWorldGenerationService` so `MockWorldDesigner` doesn't duplicate the
+same hashing logic. Added `com.unity.nuget.newtonsoft-json` to
+`Packages/manifest.json` (justified: `WorldSpecification`'s model classes
+use C# auto-properties, which Unity's built-in `JsonUtility` cannot
+deserialize into — only public fields).
+
+Tests: `WorldDesignRequestTests`, `MockWorldDesignerTests`,
+`WorldSpecificationJsonParserTests` (including a `$type`-injection attempt
+and script/SQL-injection-shaped string content, both confirmed to end up
+as inert data), `LLMWorldDesignerTests` (fake in-memory `ILLMClient` — no
+network — covering success/failure/cancellation/malformed-response, plus
+the three provider stubs' not-configured behavior).
+
+Full design reasoning, the request/response flow, the security boundary,
+and Reactor's now-optional future role: `docs/AI_WORLD_DESIGNER.md`.
 
 ## Phase 6.5 detail
 

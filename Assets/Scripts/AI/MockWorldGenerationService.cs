@@ -1,7 +1,7 @@
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Sim.Utilities;
 using Sim.WorldGeneration.Models;
 
 namespace Sim.AI
@@ -43,7 +43,7 @@ namespace Sim.AI
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            int seed = request.Seed ?? StableHash(request.Prompt);
+            int seed = request.Seed ?? StableHash.Fnv1a(request.Prompt);
 
             var result = new ReactorWorldResult
             {
@@ -63,27 +63,6 @@ namespace Sim.AI
             };
 
             return WorldGenerationOutcome.Succeeded(result);
-        }
-
-        /// <summary>
-        /// FNV-1a over the UTF-8 prompt bytes — deterministic across processes/platforms/.NET
-        /// versions, unlike string.GetHashCode() (which Microsoft explicitly does not
-        /// guarantee to be stable across runs). Used only to give "no seed supplied" requests
-        /// a reproducible seed for this mock; not a claim about how a real backend derives one.
-        /// </summary>
-        private static int StableHash(string text)
-        {
-            const uint fnvOffsetBasis = 2166136261;
-            const uint fnvPrime = 16777619;
-
-            uint hash = fnvOffsetBasis;
-            foreach (byte b in Encoding.UTF8.GetBytes(text ?? string.Empty))
-            {
-                hash ^= b;
-                hash *= fnvPrime;
-            }
-
-            return unchecked((int)hash);
         }
     }
 }

@@ -265,6 +265,47 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
+        public void Validate_NullCourse_RepairsToDefault_Warning()
+        {
+            var spec = ValidSpec();
+            spec.Course = null;
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.IsTrue(result.IsValid);
+            Assert.IsNotNull(result.RepairedSpecification.Course);
+            Assert.IsTrue(result.Errors.Exists(e => e.Field == "Course" && e.Severity == ValidationSeverity.Warning));
+        }
+
+        [Test]
+        public void Validate_NegativeGateCount_ClampsToZero()
+        {
+            var spec = ValidSpec();
+            spec.Course.GateCount = -5;
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.AreEqual(0, result.RepairedSpecification.Course.GateCount);
+        }
+
+        [Test]
+        public void Validate_RichCourseIntent_SurvivesValidationUnchanged()
+        {
+            var spec = ValidSpec();
+            spec.Course.Style = "technical_then_high_speed";
+            spec.Course.Difficulty = "hard";
+            spec.Course.GateCount = 15;
+            spec.Course.SectionDescriptions = new List<string> { "technical and tight", "opens into a high-speed valley" };
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.IsTrue(result.IsValid);
+            Assert.AreEqual("technical_then_high_speed", result.RepairedSpecification.Course.Style);
+            Assert.AreEqual(15, result.RepairedSpecification.Course.GateCount);
+            Assert.AreEqual(2, result.RepairedSpecification.Course.SectionDescriptions.Count);
+        }
+
+        [Test]
         public void Validate_RepairsMutateAndReturnTheSameInstance()
         {
             var spec = ValidSpec();
