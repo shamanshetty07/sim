@@ -145,9 +145,9 @@ Assets/
   Materials/
   Resources/
   Settings/                     ScriptableObject configs (DroneConfig, PrefabRegistry assets)
-Tests/
-  EditMode/                     Agent 14 — validator, parser, seed determinism
-  PlayMode/                     Agent 14 — drone controls, generation end-to-end
+  Tests/
+    EditMode/                   Agent 14 — validator, parser, seed determinism, pure flight math
+    PlayMode/                   Agent 14 — drone controls, generation end-to-end
 docs/
   ARCHITECTURE.md               this file
   WORLD_GENERATION.md           spec schema + validation limits
@@ -254,7 +254,7 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout |
 | 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5 |
 | 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` |
-| 14 | QA Engineer | `Tests/EditMode/*`, `Tests/PlayMode/*` |
+| 14 | QA Engineer | `Assets/Tests/EditMode/*`, `Assets/Tests/PlayMode/*` |
 
 In practice these are implemented sequentially by one engineer following the
 phase order in `docs/IMPLEMENTATION_PLAN.md`, not as 14 independently running
@@ -274,3 +274,9 @@ context is what keeps them consistent.
   supplied; `ReactorLingbotWorldService` is written against the same
   `IWorldGenerationService` contract as Mock so swapping it in is a config
   change, not a rewrite.
+- Tests live at `Assets/Tests/{EditMode,PlayMode}`, not a top-level
+  `Tests/`. Unity only compiles/discovers scripts under `Assets/` (and
+  `Packages/`) — a `Tests/` folder outside `Assets/` would never be picked
+  up by the Test Runner. The brief's illustrative layout listed it as a
+  sibling of `Assets/`; this project deviates from that specifically for it
+  to actually work.
