@@ -9,7 +9,7 @@ check it before assuming a phase needs to start from scratch.
 | 1 | Inspect repository | ✅ Done — empty dir, no existing project. Greenfield build, Unity 2022.3 LTS. |
 | 2 | Architecture + interfaces | ✅ Done — `docs/ARCHITECTURE.md`, folder structure, git init, Unity project skeleton (`ProjectSettings/`, `Packages/manifest.json`). |
 | 3 | Drone flies correctly | ✅ Done — Rigidbody physics, Angle/Acro/Horizon, Input System + keyboard fallback, EditMode tests. Unverified in a live Editor (none available here). |
-| 4 | FPV camera + OSD | ⏳ Next |
+| 4 | FPV camera + OSD | ✅ Done — camera rig, HUD/telemetry UI, editor tooling extended, EditMode tests. Unverified in a live Editor (none available here). |
 | 5 | WorldSpecification models | ⬜ Not started |
 | 6 | Mock AI service (hardcoded JSON → world) | ⬜ Not started |
 | 7 | Connect real AI service (Reactor/Lingbot) | ⬜ Blocked — awaiting API key/docs from user |
@@ -38,6 +38,32 @@ documented convention, and a sibling-Awake-ordering issue where Rigidbody
 mass could silently never get applied if config was set only on
 `DroneController` (fixed by re-applying mass inside `Configure()` itself,
 not just in `Awake()`).
+
+## Phase 4 detail
+
+Files added under `Assets/Scripts/Camera/`: `CameraSmoothing.cs` (pure
+exponential-decay smoothing math), `CameraMount.cs` (marker component),
+`FPVCameraController.cs`. Under `Assets/Scripts/UI/`: `TelemetryFormatter.cs`
+(pure string formatting), `TelemetryUI.cs`, `FPVHUD.cs`. Extended
+`Assets/Scripts/Editor/DroneRigBuilder.cs` with camera/OSD builders and a
+new `Build Drone Test Scene (Save To Disk)` command that saves
+`Assets/Scenes/DroneTestScene.unity` via `EditorSceneManager` (not hand-
+authored). Extended Phase 3's `FlightTelemetry` with
+`LocalAngularVelocityDegPerSec`/`AngularSpeedDegPerSec` (the only Phase 3
+change this phase needed — see docs/FPV_CAMERA_AND_OSD.md). Added
+`Unity.TextMeshPro`/`UnityEngine.UI` to `Sim.Runtime`/`Sim.Editor` asmdefs.
+Tests: `CameraSmoothingTests`, `FPVCameraControllerTests`,
+`TelemetryFormatterTests` under `Assets/Tests/EditMode/`. Full design
+detail, event-lifecycle reasoning, and the manual verification checklist
+are in `docs/FPV_CAMERA_AND_OSD.md`.
+
+One real bug caught and fixed during review before commit:
+`FPVCameraController.ApplyLensSettings()` only wrote to a `_camera` field
+that was populated in `Awake()`/`OnValidate()` — but `Awake()` never runs
+for a component added via script in Edit mode (only in Play mode or with
+`[ExecuteInEditMode]`), so calling `ApplyLensSettings()` directly (as a test,
+or as Editor tooling might) could silently no-op. Fixed by having the method
+lazily resolve `_camera` itself instead of assuming prior initialization.
 
 ## Notes / decisions carried forward
 

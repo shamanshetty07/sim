@@ -24,6 +24,12 @@ namespace Sim.Drone
         public readonly float RollDeg;
         public readonly float YawDeg;
 
+        /// <summary>Body-space angular velocity, degrees/second per local axis (x=pitch, y=yaw, z=roll). See DroneFlightModel's axis convention.</summary>
+        public readonly Vector3 LocalAngularVelocityDegPerSec;
+
+        /// <summary>Magnitude of <see cref="LocalAngularVelocityDegPerSec"/> — a single "how fast is it rotating" OSD figure.</summary>
+        public float AngularSpeedDegPerSec => LocalAngularVelocityDegPerSec.magnitude;
+
         /// <summary>0-1 shaped throttle actually applied this step (post deadzone/expo/curve).</summary>
         public readonly float ThrottlePercent01;
 
@@ -35,6 +41,7 @@ namespace Sim.Drone
             float pitchDeg,
             float rollDeg,
             float yawDeg,
+            Vector3 localAngularVelocityDegPerSec,
             float throttlePercent01)
         {
             Mode = mode;
@@ -47,6 +54,7 @@ namespace Sim.Drone
             PitchDeg = pitchDeg;
             RollDeg = rollDeg;
             YawDeg = yawDeg;
+            LocalAngularVelocityDegPerSec = localAngularVelocityDegPerSec;
             ThrottlePercent01 = throttlePercent01;
         }
     }

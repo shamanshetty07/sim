@@ -107,6 +107,7 @@ namespace Sim.Drone
                 attitude.PitchDeg,
                 attitude.RollDeg,
                 transform.eulerAngles.y,
+                attitude.LocalAngularVelocityDegPerSec,
                 output.ThrustForceNewtons / Mathf.Max(_config.MaxThrustForce, 0.0001f));
 
             TelemetryUpdated?.Invoke(CurrentTelemetry);

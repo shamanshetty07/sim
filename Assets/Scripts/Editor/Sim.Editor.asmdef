@@ -2,7 +2,9 @@
     "name": "Sim.Editor",
     "rootNamespace": "",
     "references": [
-        "Sim.Runtime"
+        "Sim.Runtime",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [
         "Editor"
