@@ -1,8 +1,15 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 2 — initial design.** This document is the contract the rest of
-the project is built against. Update it when a phase changes a decision made
-here; don't let code and doc drift apart.
+Status: **Phase 5 — world-generation data contracts.** This document is the
+contract the rest of the project is built against. Update it when a phase
+changes a decision made here; don't let code and doc drift apart.
+
+> **User natural-language prompts are the primary input to world
+> generation.** Every generated world traces back to the exact prompt text
+> the user typed — the prompt is never reduced to a fixed set of parameters
+> (e.g. `biome = mountain`) before being handed to the world-generation
+> backend. See §6 and `docs/WORLD_SPECIFICATION.md` for how the prompt is
+> carried through the pipeline unmodified.
 
 ## 0. Inspection summary (Phase 1)
 
@@ -25,14 +32,24 @@ Project` there as part of Phase 3's acceptance check, not an afterthought.
 > it.**
 
 The AI never emits executable code, never touches `GameObject.Instantiate`,
-`Rigidbody`, or `SceneManagement` directly. It emits a `WorldSpecification` —
-plain data (POCOs, JSON-serializable, no behaviour). Unity's generator reads
-that data and deterministically builds the scene. This boundary is enforced
-structurally: the AI layer's only output type is `WorldSpecification`, and
-the world-generation layer's only input type is a *validated*
-`WorldSpecification`. Nothing in `Assets/Scripts/WorldGeneration` depends on
-`Assets/Scripts/AI`, and nothing in `AI` depends on `UnityEngine` types that
-create objects.
+`Rigidbody`, or `SceneManagement` directly. Unity's generator only ever
+builds from a *validated* `WorldSpecification` — plain data (POCOs,
+JSON-serializable, no behaviour). This boundary is enforced structurally:
+nothing in `Assets/Scripts/WorldGeneration` depends on `Assets/Scripts/AI`,
+and nothing in `AI` depends on `UnityEngine` types that create objects.
+
+**Revised in Phase 5** — `WorldSpecification` is *Unity's* internal,
+normalized contract, not a claim about what the world-generation backend
+(OpenWorld Reactor) natively produces. Earlier phases implicitly assumed the
+AI layer's job was "return JSON that already looks like WorldSpecification."
+That assumption is now explicit and separated into two steps: the backend
+returns a `ReactorWorldResult` — a richer, mostly-opaque envelope that can
+carry either structured data, a reference to a native scene/asset
+representation, or both — and a `ReactorWorldAdapter` converts that into
+`WorldSpecification`. This is what keeps the normalized contract from
+becoming "a restrictive replacement for the actual generated world" (see
+`docs/WORLD_SPECIFICATION.md` for the full reasoning and the open question
+this leaves pending real OpenWorld Reactor access).
 
 ## 2. System architecture
 
@@ -42,16 +59,22 @@ create objects.
 │  Assets/Scripts/UI                                                   │
 │  PromptInputUI · GenerationUI · FPVHUD · TelemetryUI                 │
 └───────────────┬────────────────────────────────────────┬────────────┘
-                │ prompt string                          │ reads telemetry
+                │ WorldGenerationRequest (full prompt)   │ reads telemetry
                 ▼                                          │
 ┌─────────────────────────────┐                            │
 │           AI Layer            │                           │
 │  Assets/Scripts/AI            │                           │
 │  IWorldGenerationService      │                           │
-│  WorldPromptBuilder           │                           │
-│  WorldSpecificationParser     │                           │
-│  Mock / ReactorLingbot / ...  │                           │
+│  Mock / OpenWorldReactor / ...│                           │
 └───────────────┬───────────────┘                           │
+                │ ReactorWorldResult (backend-native — structured          │
+                │ data and/or a native scene/asset reference)   │
+                ▼                                            │
+┌─────────────────────────────┐                            │
+│         Adapter Layer         │                           │
+│  Assets/Scripts/WorldGeneration/Adapters                   │
+│  ReactorWorldAdapter → WorldSpecification                   │
+└───────────────┬───────────────┘                            │
                 │ WorldSpecification (untrusted)             │
                 ▼                                            │
 ┌─────────────────────────────────────────────────────────┐ │
@@ -97,14 +120,18 @@ Cross-cutting:
 1. User types a prompt in `PromptInputUI` and clicks **Generate World**.
 2. `GenerationUI` calls `WorldGenerationController` (Core), which owns the
    pipeline state machine and keeps the UI responsive (async, see §7).
-3. `WorldPromptBuilder` turns the raw prompt (+ optional prior spec, for
-   "regenerate with tweak") into an `AIRequest`.
-4. The active `IWorldGenerationService` (Mock, ReactorLingbot, ...) sends the
-   request and returns an `AIResponse` wrapping raw JSON text or an error.
-5. `WorldSpecificationParser` deserializes JSON → `WorldSpecification`
-   *models only* (no Unity types). Malformed JSON is rejected here, not
-   downstream.
-6. `WorldSpecificationValidator` checks the parsed spec against hard limits
+3. The raw prompt (+ seed/scale/optional prior spec, for "regenerate with a
+   tweak") is wrapped, **unmodified**, into a `WorldGenerationRequest`. No
+   step before the backend call reduces the prompt to a fixed parameter set.
+4. The active `IWorldGenerationService` (Mock, OpenWorldReactor, ...) sends
+   the request and returns a `WorldGenerationOutcome` wrapping either a
+   `ReactorWorldResult` or a failure reason.
+5. `ReactorWorldAdapter` converts `ReactorWorldResult` → `WorldSpecification`.
+   This is the only place the backend's native representation is translated
+   into Unity's normalized contract — see `docs/WORLD_SPECIFICATION.md` for
+   why this is a separate step rather than the backend returning
+   `WorldSpecification` directly.
+6. `WorldSpecificationValidator` checks the resulting spec against hard limits
    (`docs/WORLD_GENERATION.md` §Limits) and clamps/repairs recoverable
    issues (e.g. missing seed → generate one; tree count over max → clamp).
    Returns a `ValidationResult` (list of `ValidationError` + the
@@ -127,11 +154,16 @@ Assets/
   Scenes/
   Scripts/
     AI/                         Agent 5 — provider-agnostic AI client
+                                 (IWorldGenerationService, WorldGenerationOutcome,
+                                 MockWorldGenerationService, OpenWorldReactorWorldGenerationService)
     Drone/                      Agent 2 — Rigidbody flight
     Camera/                     Agent 3 — FPV camera rig
     UI/                         Agent 3 + 11 — HUD, OSD, prompt/generation UI
     WorldGeneration/
-      Models/                   Agent 4 — WorldSpecification data contract
+      Models/                   Agent 4 — WorldGenerationRequest, ReactorWorldResult,
+                                 WorldSpecification and its sub-models (see
+                                 docs/WORLD_SPECIFICATION.md)
+      Adapters/                  Agent 4/5 — ReactorWorldAdapter: ReactorWorldResult -> WorldSpecification
       Validation/                Agent 6 — limits + repair
       Terrain/                   Agent 8 — terrain algorithms
       Environment/                Agent 9 — prefab placement, PrefabRegistry
@@ -150,9 +182,12 @@ Assets/
     PlayMode/                   Agent 14 — drone controls, generation end-to-end
 docs/
   ARCHITECTURE.md               this file
-  WORLD_GENERATION.md           spec schema + validation limits
-  AI_INTEGRATION.md             provider contract, Reactor/Lingbot notes
+  WORLD_SPECIFICATION.md        prompt -> OpenWorld Reactor -> adapter -> WorldSpecification
+                                 pipeline, what Unity owns vs. what Reactor owns
+  WORLD_GENERATION.md           spec schema + validation limits (Phase 6+)
+  AI_INTEGRATION.md             provider contract, OpenWorld Reactor notes (Phase 6/7)
   DRONE_PHYSICS.md              flight model, credits to reference repo
+  FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
 ```
 
 Namespaces mirror folders (`Sim.Drone`, `Sim.WorldGeneration.Models`,
@@ -190,38 +225,78 @@ depends on interfaces — `ITerrainGenerator`, etc. — not concrete classes).
 
 ## 6. AI ↔ Unity communication
 
-- **Contract, not code.** The only thing that crosses the AI boundary is
-  JSON text in, `WorldSpecification` (or a validation failure) out. See
-  `docs/AI_INTEGRATION.md` for the schema and `docs/WORLD_GENERATION.md` for
-  field-by-field limits.
+**OpenWorld Reactor is the intended world-generation backend.** Phase 5
+looked for an actual OpenWorld Reactor SDK, API, configuration, or
+documentation in this development environment — environment variables,
+installed CLI tools, packages (npm/pip/gem), and common config
+locations — and found **none**. Nothing about its real capabilities (prompt
+submission format, local vs. remote execution, whether it returns
+structured data vs. scene/asset data, streaming, seed support, determinism
+guarantees, or its Unity integration mechanism) is currently known. Nothing
+below is invented to fill that gap — where a real answer is needed, it's
+called out as an open question in `docs/WORLD_SPECIFICATION.md` instead of
+guessed at.
+
+- **The prompt is preserved, not reduced.** `WorldGenerationRequest.Prompt`
+  carries the user's complete natural-language text unmodified through the
+  entire pipeline — no step between the UI and the backend call parses it
+  down to a fixed parameter set (e.g. `biome = mountain`). This is enforced
+  by there being no code path that constructs a `WorldGenerationRequest`
+  without a prompt string, and by `WorldGenerationMetadata` echoing the
+  originating request's ID back through `ReactorWorldResult` so the prompt
+  that produced a given world is always traceable.
 - **Provider abstraction.** `IWorldGenerationService.GenerateWorldAsync
-  (AIRequest) → Task<AIResponse>`. Concrete implementations:
-  `MockWorldGenerationService` (Phase 6, hand-authored example specs +
-  simple keyword rules, no network), `ReactorLingbotWorldService` (Phase 7,
-  stubbed pending API credentials — see below), with `OpenAIWorldService` /
-  `LocalLLMWorldService` documented as future drop-ins behind the same
-  interface. Selection is a `Settings/AIServiceConfig` ScriptableObject, not
-  a compile-time switch.
-- **Secrets.** Never committed. `ReactorLingbotWorldService` reads
-  `REACTOR_API_KEY` / `REACTOR_ENDPOINT` / `REACTOR_MODEL` from environment
-  variables (or a local, gitignored `.env`-style file for Editor testing).
-  Until real credentials are supplied, this service throws a clear
-  `NotConfiguredException` rather than silently falling back — the caller
-  decides whether to fall back to Mock.
-- **Transport.** `UnityWebRequest` (already in the package manifest) inside
-  the real service, wrapped so `WorldSpecificationParser` and everything
-  downstream is transport-agnostic and testable with canned JSON.
-- **Untrusted-input handling.** Every request downstream (Validation
-  → WorldGenerator) treats AI output as untrusted input: parse defensively,
-  validate before use, never `eval`/reflection-invoke on AI text, never let
-  an AI-supplied string become a type name, path, or shell/console command.
+  (WorldGenerationRequest) → Task<WorldGenerationOutcome>`, where a
+  successful outcome carries a `ReactorWorldResult` — the backend's own
+  result envelope, not yet Unity's normalized shape. Concrete
+  implementations: `MockWorldGenerationService` (hand-authored example,
+  clearly documented as non-interpretive — it does not parse the prompt,
+  it exists only to prove the contract is usable end-to-end; Phase 6 is
+  where a mock actually worth developing against gets built),
+  `OpenWorldReactorWorldGenerationService` (stubbed — throws
+  `ReactorNotConfiguredException` until real SDK/API access exists; see
+  below), with other providers (a local LLM, a different hosted service)
+  documented as future drop-ins behind the same interface. Selection is a
+  `Settings/AIServiceConfig` ScriptableObject, not a compile-time switch.
+- **Result envelope, not an assumed shape.** `ReactorWorldResult` does not
+  assume OpenWorld Reactor returns JSON that already looks like
+  `WorldSpecification`. It carries a `PayloadKind` (`StructuredData` /
+  `NativeSceneReference` / `Unknown`) plus either a raw structured payload
+  or a native asset/scene reference, so the architecture doesn't foreclose
+  Reactor turning out to generate actual scene/mesh data rather than a
+  description of one. `ReactorWorldAdapter` is the only place that
+  translates this into `WorldSpecification` — see
+  `docs/WORLD_SPECIFICATION.md` for the full reasoning, since this was the
+  central open design question this phase had to make a provisional call on
+  without real Reactor access.
+- **Secrets.** Never committed. `OpenWorldReactorWorldGenerationService`
+  is written to read `REACTOR_API_KEY` / `REACTOR_ENDPOINT` /
+  `REACTOR_MODEL` from environment variables (or a local, gitignored
+  `.env`-style file for Editor testing) once real integration work starts —
+  these are placeholder names, not confirmed against any real Reactor
+  configuration contract, since none was available to inspect. Until real
+  credentials/SDK access exist, the service throws `ReactorNotConfiguredException`
+  rather than silently falling back — the caller decides whether to fall
+  back to Mock.
+- **Transport.** Unknown until Reactor's real integration mechanism is
+  known — could be `UnityWebRequest` (already in the package manifest) for
+  a REST API, a native SDK/plugin, or something else entirely. The
+  interface is written so this is fully encapsulated inside
+  `OpenWorldReactorWorldGenerationService`; nothing else in the codebase
+  assumes a transport.
+- **Untrusted-input handling.** Every request downstream (Adapter →
+  Validation → WorldGenerator) treats backend output as untrusted input:
+  parse defensively, validate before use, never `eval`/reflection-invoke on
+  it, never let a backend-supplied string become a type name, path, or
+  shell/console command. This applies whether the payload is structured
+  data or a native asset reference.
 
 ## 7. Error handling strategy
 
 | Failure point | Behaviour |
 |---|---|
-| AI request fails (network/timeout/HTTP error) | `AIResponse.Success = false` with a reason; UI shows "World generation failed." with **Retry / Use last valid world / Use example world**. Never surfaces raw exception text as the primary message. |
-| AI returns invalid JSON | `WorldSpecificationParser` catches deserialization errors, returns a `ParseFailure`; pipeline stops before validation. Logged with the offending payload (truncated) for debugging, not shown to the player. |
+| Backend request fails (network/timeout/not configured/etc.) | `WorldGenerationOutcome.Success = false` with a `WorldGenerationFailureReason`; UI shows "World generation failed." with **Retry / Use last valid world / Use example world**. Never surfaces raw exception text as the primary message. |
+| `ReactorWorldResult`'s structured payload can't be parsed, or its native asset reference can't be resolved | **Not yet applicable** — Phase 5's `ReactorWorldAdapter` only maps the fields it can populate safely (name/description/seed/metadata/prompt) and does not attempt to parse `StructuredPayloadJson` or resolve `NativeAssetReference` at all yet (there's no real payload shape to parse against). Once that parsing is added (Phase 6/7), it must fail closed — reject rather than pass a partial/best-guess `WorldSpecification` downstream — logged with the offending payload (truncated), not shown to the player. |
 | Spec fails validation with unrecoverable errors (e.g. negative terrain size) | Pipeline stops before any Unity object is created; `ValidationResult.Errors` surfaced in the debug panel; UI falls back to the same three options as above. |
 | Spec has recoverable issues (missing seed, tree count over cap, vague/empty prompt) | Validator repairs in place (generate seed, clamp count, substitute sane defaults) and generation proceeds — "make something cool" must produce a world, not an error. |
 | Terrain/environment/obstacle generation throws mid-pipeline | Caught by `WorldGenerator` per stage; partial world is torn down, error surfaced, simulator does not crash. |
@@ -244,9 +319,9 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 1 | Architect | This document, folder structure, cross-cutting interfaces |
 | 2 | FPV Flight Engineer | `Scripts/Drone/*` |
 | 3 | FPV Camera + OSD Engineer | `Scripts/Camera/*`, `Scripts/UI/FPVHUD.cs`, `TelemetryUI.cs` |
-| 4 | AI World Designer | `Scripts/WorldGeneration/Models/*` |
+| 4 | AI World Designer | `Scripts/WorldGeneration/Models/*`, `Scripts/WorldGeneration/Adapters/*` |
 | 5 | AI Integration Engineer | `Scripts/AI/*` |
-| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` |
+| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (data contracts only as of Phase 5 — `ValidationResult`/`ValidationError`; validation logic itself is not yet implemented) |
 | 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs` |
 | 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` |
 | 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*`, `PrefabRegistry` |
@@ -270,10 +345,14 @@ context is what keeps them consistent.
 - No external asset packs assumed. Every generated object has a primitive
   fallback (cube/cylinder/sphere) per `docs/WORLD_GENERATION.md`, with the
   prefab slot in `PrefabRegistry` left open for real assets later.
-- Reactor/Lingbot's actual API shape is unknown until credentials/docs are
-  supplied; `ReactorLingbotWorldService` is written against the same
-  `IWorldGenerationService` contract as Mock so swapping it in is a config
-  change, not a rewrite.
+- OpenWorld Reactor's actual API/SDK shape is unknown — Phase 5 searched this
+  environment (env vars, CLI tools, packages, common config paths) and found
+  no trace of it. `OpenWorldReactorWorldGenerationService` is written
+  against the same `IWorldGenerationService` contract as Mock so completing
+  it later is a matter of filling in a stub, not a rewrite — but until real
+  access exists, nothing about its transport, auth, or payload shape is
+  more than a documented placeholder. See `docs/WORLD_SPECIFICATION.md`
+  "Open questions."
 - Tests live at `Assets/Tests/{EditMode,PlayMode}`, not a top-level
   `Tests/`. Unity only compiles/discovers scripts under `Assets/` (and
   `Packages/`) — a `Tests/` folder outside `Assets/` would never be picked

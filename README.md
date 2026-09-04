@@ -31,8 +31,9 @@ progress and `docs/ARCHITECTURE.md` for the system design.
 
 - `docs/ARCHITECTURE.md` — system architecture, data flow, folder layout, error handling
 - `docs/IMPLEMENTATION_PLAN.md` — phase tracker
-- `docs/WORLD_GENERATION.md` — WorldSpecification schema + validation limits (added in Phase 5)
-- `docs/AI_INTEGRATION.md` — AI provider contract, Reactor/Lingbot notes (added in Phase 6/7)
+- `docs/WORLD_SPECIFICATION.md` — prompt -> OpenWorld Reactor -> adapter -> WorldSpecification pipeline (Phase 5)
+- `docs/WORLD_GENERATION.md` — validation limits (added in Phase 6+)
+- `docs/AI_INTEGRATION.md` — AI provider contract, OpenWorld Reactor notes (added in Phase 6/7)
 - `docs/DRONE_PHYSICS.md` — flight model + credit to the reference project (added in Phase 3)
 
 ## Reference
