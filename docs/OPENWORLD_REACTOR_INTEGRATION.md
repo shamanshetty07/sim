@@ -1,5 +1,12 @@
 # OpenWorld Reactor Integration — Phase 6
 
+**See also:** `docs/REACTOR_TO_UNITY_ARCHITECTURE.md` (Phase 6.5) goes
+further than this document — it checks every model on the platform, not
+just LingBot World 2, for any path to a Unity-usable 3D/structured world,
+and gives a final recommendation (none exists today; use Unity-native
+generation). Read that document for the "what do we actually build next"
+answer; this one stays focused on the authentication/credential findings.
+
 ## Status, up front
 
 **Real OpenWorld Reactor integration pending full API/SDK access — but not

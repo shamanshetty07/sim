@@ -194,6 +194,8 @@ docs/
                                  pipeline, what Unity owns vs. what Reactor owns
   OPENWORLD_REACTOR_INTEGRATION.md  Phase 6: real Reactor identification/auth findings,
                                  what's verified vs. deferred, credential handling
+  REACTOR_TO_UNITY_ARCHITECTURE.md  Phase 6.5: can any Reactor model give Unity a
+                                 flyable 3D world? (No.) Options A-D, recommendation.
   WORLD_GENERATION.md           spec schema + validation limits (Phase 6+)
   AI_INTEGRATION.md             provider contract, superseded by OPENWORLD_REACTOR_INTEGRATION.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
@@ -302,6 +304,21 @@ guessed at.
   data or a native asset reference.
 
 ## 6a. Phase 6 finding: what OpenWorld Reactor actually is
+
+**Update (Phase 6.5):** a full investigation of whether *any* Reactor model
+can hand Unity a usable 3D/structured world is in
+`docs/REACTOR_TO_UNITY_ARCHITECTURE.md`. Conclusion: no — every model on
+the platform is video-only, with no mesh/point-cloud/depth/GLTF/USD/FBX
+export and no structured scene-state API, on any of the 8 hosted models
+checked (including the "permanent worlds" one). Recommended path: Unity's
+own procedural generation is the actual, physical, collidable world
+(Option C in that document); Reactor's role is deferred pending either new
+Reactor capabilities or a decision to use it as a non-authoritative
+decorative layer. This also surfaces a second-order finding worth reading
+in full: Reactor cannot hand back *any* structured description of prompt
+intent either (not just 3D data) — so a Unity-native generator's content
+decisions need a different source of "intelligence" than Reactor/LingBot,
+a decision not made in that document, only raised.
 
 Phase 6 identified OpenWorld Reactor as **Reactor (reactor.inc)**, hosting
 **LingBot**/**LingBot World 2** (Ant Group models) — confirmed via public

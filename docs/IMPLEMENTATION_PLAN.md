@@ -12,7 +12,8 @@ check it before assuming a phase needs to start from scratch.
 | 4 | FPV camera + OSD | ✅ Done — camera rig, HUD/telemetry UI, editor tooling extended, EditMode tests. Unverified in a live Editor (none available here). |
 | 5 | World-generation data contracts (prompt-driven, OpenWorld Reactor-shaped) | ✅ Done — `WorldGenerationRequest`, `IWorldGenerationService`, `ReactorWorldResult`, `ReactorWorldAdapter`, re-scoped `WorldSpecification`, EditMode tests. No real Reactor integration (none available to inspect). Unverified in a live Editor. |
 | 6 | Real OpenWorld Reactor auth + validation logic + state model | ✅ Done — see below. Real API key provided; identified OpenWorld Reactor as Reactor (reactor.inc)/LingBot (Ant Group) via public docs; verified real authentication with a live, successful API call. Full generation integration deferred (deliberate, user-confirmed) — see docs/OPENWORLD_REACTOR_INTEGRATION.md. |
-| 7 | Live session/streaming integration decision + Unity-side world construction | ⬜ Not started — blocked on choosing bridge-process vs. native-client direction for the deferred piece from Phase 6 |
+| 6.5 | Investigate whether any Reactor model can give Unity a usable 3D world | ✅ Done — checked all 8 hosted models. None export mesh/point-cloud/depth/GLTF/USD/FBX or structured scene state; video-only across the platform. See docs/REACTOR_TO_UNITY_ARCHITECTURE.md. Recommendation given (Option D diagnosis → Option C path); implementation not started, awaiting user direction. |
+| 7 | Unity-side procedural world construction (`WorldGenerator`) | ⬜ Not started — scope now informed by 6.5's finding that Reactor cannot supply world content in any form (not just non-3D); still needs a decision on where prompt-interpretation "intelligence" comes from before content-generation logic can be written |
 | 8 | Prompt UI | ⬜ Not started |
 | 9 | Procedural terrain | ⬜ Not started |
 | 10 | Environment objects | ⬜ Not started |
@@ -182,6 +183,42 @@ guarded cancellation against a stale/superseded call overwriting a newer
 one's state, but the same protection was missing from the
 success/failure/validation branches — fixed by applying one consistent
 `IsCurrent(token)` guard everywhere shared state is mutated.
+
+## Phase 6.5 detail
+
+User paused the planned Phase 7 (Unity world generator) to first answer:
+"can OpenWorld Reactor give Unity anything better than video to build a
+flyable world from?" Checked the platform's full 63-page documentation
+site map, not just the one model examined in Phase 6. Fetched and read:
+`concepts/tracks.md`, `concepts/frame-metadata.md`, `concepts/recordings.md`,
+`models/overview.md` (the shared wire protocol), the full
+`lingbot-world-2/schema.md` command/event list, `lingbot/overview.md`,
+`happy-oyster/overview.md` + `schema.md` (checked specifically because
+"permanent explorable worlds" sounded like it might mean an exportable
+world), `resources/faq.md`, and `changelog/overview.md` (checked for a
+recently-shipped export feature). No undocumented transport was reverse-
+engineered; no API was invented.
+
+**Finding:** every model is video-only. No mesh/point-cloud/depth (in
+practice, despite the generic docs mentioning depth as a *possible* track
+kind for *some* model)/GLTF/USD/FBX export exists anywhere on the
+platform, and no model returns structured scene/object-state JSON — only
+generation-progress and input-echo events. HappyOyster's "permanent"
+worlds are session-resumable (an `encrypted_world_id` you `attachWorld()`
+back into), not exported/persisted as data. Recommendation: Option D is
+the accurate diagnosis (Reactor cannot support the desired physics-based
+simulator's world content today, in any format), and Option C — Unity's
+own procedural generation, already scaffolded in Phases 5-6
+(`WorldSpecification`, `WorldSpecificationValidator`,
+`WorldGenerationController`) — is the resulting practical path. Also
+surfaced a second-order finding: Reactor can't hand back structured
+*intent* either, not just 3D data, so a Unity-native generator's content
+decisions need a different "intelligence" source than Reactor — raised as
+an open decision, not resolved here. Full detail and citations:
+`docs/REACTOR_TO_UNITY_ARCHITECTURE.md`.
+
+No implementation this phase — investigation and documentation only, per
+explicit instruction.
 
 ## Notes / decisions carried forward
 
