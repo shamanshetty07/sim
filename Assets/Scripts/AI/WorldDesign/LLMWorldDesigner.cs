@@ -55,6 +55,19 @@ namespace Sim.AI.WorldDesign
                 Debug.Log("[WorldDesign] Design cancelled.");
                 return WorldDesignOutcome.Failed(WorldDesignFailureReason.Cancelled, "World design was cancelled.");
             }
+            catch (LLMNotConfiguredException)
+            {
+                // Its own specific catch (rather than falling into the generic Exception branch
+                // below) so this reaches the WorldDesignFailureReason value that already existed
+                // specifically for it (Phase 10), instead of the generic Unknown bucket.
+                Debug.LogWarning($"[WorldDesign] {_client.ProviderName} is not configured.");
+                return WorldDesignOutcome.Failed(WorldDesignFailureReason.NotConfigured, "World designer is not configured.");
+            }
+            catch (LLMRequestTimeoutException ex)
+            {
+                Debug.LogWarning($"[WorldDesign] {ex.Message}");
+                return WorldDesignOutcome.Failed(WorldDesignFailureReason.Timeout, "World design timed out.");
+            }
             catch (Exception ex)
             {
                 Debug.LogError($"[WorldDesign] Unexpected exception from ILLMClient ({_client.ProviderName}): {ex}");

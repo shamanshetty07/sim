@@ -120,25 +120,32 @@ changing Unity's world-generation code" — holds regardless of which shape
 sits behind `IWorldDesigner`; nothing outside this folder can tell the
 difference.
 
-**None of the three `ILLMClient` stubs make a real network call.** No
-OpenAI, Anthropic, or local-LLM credentials exist in this project's
-environment. Each stub checks for configuration (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY` — genuinely standard names used by those providers' own
-SDKs; `LOCAL_LLM_ENDPOINT` — this project's own convention, flagged as such
-in its own doc-comment, since "local LLM" has no single standard API) and
-throws `LLMNotConfiguredException` if absent. If configured, each still
-returns a clean failure rather than attempting an unverified call — per
-this phase's explicit instruction to implement a real provider only once
-its API is actually configured. Each class's doc-comment states exactly
-what the real HTTP call would look like (endpoint, headers, request/
-response shape) so completing one is filling in a documented gap, not
-research from scratch — mirroring `OpenWorldReactorWorldGenerationService`
-before Phase 6 gave it real credentials to verify against. These three
-stubs don't yet share Reactor's more robust `IReactorCredentialsProvider`
-(env var + local `.env.local` file) — a lighter, override-constructor
-mechanism was used instead, sufficient for stubs with no real logic behind
-them yet; adopting the same dual-lookup pattern is a reasonable next step
-once any of these gets real credentials.
+**Phase 10 update: `AnthropicLLMClient` is now a real integration**, not a
+stub — see `docs/PHASE_10_REAL_LLM.md` for the full picture (structured
+output via forced tool use, the shared `WorldSpecificationToolSchema`,
+timeout/cancellation, error handling, security, testing). `OpenAiLLMClient`
+and `LocalLLMClient` remain exactly as described below: honest
+configuration-checked stubs, untouched this phase, per Phase 10's explicit
+"implement one real provider, leave the others as stubs" instruction.
+
+**`OpenAiLLMClient`/`LocalLLMClient` still make no real network call.** No
+OpenAI or local-LLM credentials exist in this project's environment. Each
+stub checks for configuration (`OPENAI_API_KEY` — genuinely standard,
+used by OpenAI's own SDKs; `LOCAL_LLM_ENDPOINT` — this project's own
+convention, flagged as such in its own doc-comment, since "local LLM" has
+no single standard API) and throws `LLMNotConfiguredException` if absent.
+If configured, each still returns a clean failure rather than attempting
+an unverified call — per Phase 7's original "implement a real provider
+only once its API is actually configured" instruction, which Phase 10
+then acted on for Anthropic specifically. Each class's doc-comment states
+exactly what the real HTTP call would look like so completing one is
+filling in a documented gap, not research from scratch — mirroring
+`OpenWorldReactorWorldGenerationService` before Phase 6, and
+`AnthropicLLMClient` itself before Phase 10. These two stubs don't yet
+share the dual-lookup credentials pattern (env var + local `.env.local`
+file) Phase 10 generalized into `EnvironmentLlmCredentialsProvider` for
+`AnthropicLLMClient` — adopting it is a reasonable next step once either
+gets real credentials.
 
 ## JSON validation and the "never execute AI-generated code" boundary
 
@@ -218,7 +225,7 @@ what real interpretation will do.
 | Malformed/hostile JSON | Caught, converted to a clean `WorldDesignFailureReason.InvalidResponse` — never an uncaught exception. |
 | Oversized/deeply-nested payloads | Bounded by `MaxDepth`; hard count/size limits are `WorldSpecificationValidator`'s job downstream (`WorldGenerationLimits`, Phase 6). |
 | Prompt/seed spoofing by the model | `OriginalPrompt`/`Seed` always overwritten from the request, never trusted from the response. |
-| Provider credentials | No LLM provider is configured in this project's environment — nothing to leak. When one is, the same rules as Reactor's credentials apply (never in source/docs/logs, local `.env`-style file only, gitignored) — see `docs/OPENWORLD_REACTOR_INTEGRATION.md` "Credentials" for the established pattern to follow. |
+| Provider credentials | Phase 10: `AnthropicLLMClient` follows the same rules as Reactor's credentials (never in source/docs/logs, local `.env.local` file only, gitignored) via the new `EnvironmentLlmCredentialsProvider` — see `docs/PHASE_10_REAL_LLM.md`. No Anthropic key is actually configured in this project's environment as of Phase 10 — nothing to leak. OpenAI/local-LLM remain unconfigured stubs. |
 
 ## Future Reactor video integration
 
@@ -249,11 +256,17 @@ function.
 
 - No real LLM provider call (no OpenAI/Anthropic/local-LLM credentials
   exist in this environment — see the provider abstraction section).
+  **Superseded Phase 10**: `AnthropicLLMClient` is now real — see
+  `docs/PHASE_10_REAL_LLM.md`. OpenAI/local-LLM remain stubs.
 - No `WorldGenerator` — still the next real implementation phase.
+  **Built Phase 8** — see `docs/WORLD_GENERATION.md`.
 - No orchestration/state-machine controller for `IWorldDesigner` analogous
   to `WorldGenerationController` (Phase 6) — not asked for this phase; a
   reasonable next step once a UI needs to drive Generate/Cancel/Retry
-  against this pipeline specifically.
+  against this pipeline specifically. **`WorldGenerationController` was
+  extended to do exactly this in Phase 8/9.**
 - No production/shipped-build credential flow for any LLM provider —
   whichever provider is configured first should follow the same
-  Editor/dev-only pattern established for Reactor.
+  Editor/dev-only pattern established for Reactor. **Still true as of
+  Phase 10** — `EnvironmentLlmCredentialsProvider`'s `.env.local` fallback
+  is explicitly Editor/local-dev only (see `docs/PHASE_10_REAL_LLM.md`).

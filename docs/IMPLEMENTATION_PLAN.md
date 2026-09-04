@@ -16,12 +16,13 @@ check it before assuming a phase needs to start from scratch.
 | 7 | AI World Designer + WorldSpecification generation | ✅ Done — `IWorldDesigner`/`WorldDesignRequest`/`WorldDesignOutcome`, `MockWorldDesigner` (rich, deterministic, non-interpretive), `LLMWorldDesigner` + `ILLMClient` (OpenAI/Anthropic/Local — all honest stubs, none configured), `WorldSpecificationJsonParser` (Newtonsoft.Json, `TypeNameHandling.None`), new `CourseSpecification` model. Answers 6.5's "where does the intelligence come from" question. See docs/AI_WORLD_DESIGNER.md. |
 | 8 | Unity-side procedural world construction (`WorldGenerator`) | ✅ Done — `WorldGenerator` + `TerrainGenerator`/`EnvironmentGenerator`/`ObstacleGenerator`/`LightingGenerator`/`WeatherGenerator`/`SpawnResolver`/`WorldSeedManager`, `CheckpointManager`/`CheckpointTrigger`, Editor tooling, EditMode tests. See docs/WORLD_GENERATION.md. This phase substantially covers what rows 10-12 below originally described (terrain/environment/obstacles were all built together, not as separate later phases) — see the note under this table. |
 | 9 | Prompt UI + wiring `WorldGenerationController` → `WorldGenerator` at runtime | ✅ Done — `WorldGenerationController` extended to drive generation+clearing; `Sim.Simulation` (`WorldGenerationRuntimeService`, `RuntimeSimulationBootstrap`, `IDroneSpawnTarget`); `WorldGenerationUI`/`WorldGenerationStatusFormatter`; Editor tooling builds the runtime scene. EditMode tests. See docs/PHASE_9_RUNTIME_PIPELINE.md. Unverified in a live Editor (none available here). |
-| 10 | Procedural terrain | ✅ Covered by Phase 8 (`TerrainGenerator`) — kept as a row for traceability against the original brief, not separate remaining work |
-| 11 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
-| 12 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
-| 13 | Save/load | ⬜ Not started |
-| 14 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
-| 15 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
+| 10 | Real LLM World Designer | ✅ Done — `AnthropicLLMClient` is a real Messages API integration (structured output via forced tool use + strict JSON Schema, `IHttpTransport` testability seam, `EnvironmentLlmCredentialsProvider`, timeout/cancellation, error handling). `OpenAiLLMClient`/`LocalLLMClient` remain stubs (explicit "implement one provider" instruction). EditMode tests (fake transport, no real network/API key). Real-provider smoke test not run — no credentials available. See docs/PHASE_10_REAL_LLM.md. |
+| 11 | Procedural terrain | ✅ Covered by Phase 8 (`TerrainGenerator`) — kept as a row for traceability against the original brief, not separate remaining work |
+| 12 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
+| 13 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
+| 14 | Save/load | ⬜ Not started |
+| 15 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
+| 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 
 Numbering has diverged from the original 14-phase brief (the 6.5
 investigation and this phase's architecture pivot both required insertions
@@ -350,6 +351,89 @@ limitations" for the complete list): no real LLM provider; no generated-
 world summary or checkpoint-progress UI; `RuntimeSimulationBootstrap`
 cannot build the drone rig itself (needs a scene built via Editor tooling
 first); nothing verified in a live Unity Editor (none available here).
+
+## Phase 10 detail
+
+Implemented the one real LLM provider Phase 7 left as an honest stub.
+Inspected the full existing pipeline first (`IWorldDesigner`,
+`LLMWorldDesigner`, `ILLMClient` + all three stubs, `WorldSpecification`
+and its nested models, `WorldSpecificationValidator`,
+`WorldGenerationController`/`WorldGenerationRuntimeService`/
+`WorldGenerationUI` from Phase 9) before writing anything — confirmed no
+provider was yet configured in `.env.local` (only Phase 6's OpenWorld
+Reactor credentials were present), so per this phase's explicit
+instruction, implemented exactly one provider rather than several.
+**Anthropic (Claude) chosen** — its stub already had the most accurately
+pre-researched API shape from Phase 7, and its Messages API's tool-use
+mechanism maps cleanly onto this project's existing
+`WorldSpecification`-as-JSON contract. Verified endpoint, headers, request/
+response shape, structured-output mechanism, and error shape directly
+against Anthropic's current official documentation
+(`platform.claude.com/docs/en/api/messages`, `.../agents-and-tools/
+tool-use/*`, `.../build-with-claude/structured-outputs`, `.../api/errors`)
+before writing any code — nothing invented or guessed.
+
+**New files**, all `Assets/Scripts/AI/WorldDesign/` (existing folder, no
+new namespace): `WorldSpecificationToolSchema.cs` (the one canonical JSON
+Schema for structured-output enforcement, mirroring
+`LLMWorldDesigner.BuildSystemPrompt()`'s field list — never adds an `enum`
+to a field the model documents as free-form); `IHttpTransport.cs` +
+`HttpTransportResponse.cs` + `UnityWebRequestHttpTransport.cs` (a small
+testability seam — the brief's "testable HTTP abstraction" request — real
+implementation copies `OpenWorldReactorWorldGenerationService`'s
+already-verified-safe non-blocking `UnityWebRequest` polling pattern
+exactly); `EnvironmentLlmCredentialsProvider.cs` (env var + `.env.local`
+dual lookup, generalizing the pattern `Sim.AI.EnvironmentReactorCredentialsProvider`
+established for Reactor — a new class, Reactor's own untouched, per "do
+not modify Reactor integration"); `LLMRequestTimeoutException.cs` (same
+"signal via a dedicated exception type" idiom as the existing
+`LLMNotConfiguredException`).
+
+**Rewritten**: `AnthropicLLMClient.cs` — real `CompleteAsync`, forces
+Anthropic's own structured-output mechanism (`tool_choice`
+`{"type":"tool","name":"emit_world_specification"}` + `"strict": true` on
+the tool definition) rather than "please output JSON" free text; extracts
+the `tool_use` block's `input` (already WorldSpecification-shaped JSON)
+and hands its text to the same, unchanged `IWorldSpecificationJsonParser`
+every `IWorldDesigner` already uses — no new deserialization path, every
+existing `TypeNameHandling.None`/`$type`-injection protection applies
+unchanged. Deliberately never sends `temperature`/`top_p`/`top_k` —
+verified they're deprecated/value-restricted on current Claude models and
+would 400 on a real call. Existing `apiKeyOverride` constructor parameter
+(and its existing test) preserved unchanged; three new optional
+parameters added after it.
+
+**`LLMWorldDesigner.cs` — two new specific `catch` clauses** (before the
+existing generic one), so a not-configured provider and a timed-out
+request reach the `WorldDesignFailureReason.NotConfigured`/`.Timeout`
+values that already existed in the enum since Phase 7/8 but were
+previously fallen through to the generic `Unknown` bucket — a small,
+targeted, well-justified fix directly serving this phase's explicit
+"handle missing API key"/"timeout becomes clean failure" requirements,
+not scope creep.
+
+**Untouched, per explicit instruction**: `OpenAiLLMClient`/`LocalLLMClient`
+(still honest stubs), all of `Sim.AI`'s Reactor-facing code, everything in
+`Sim.Core`/`Sim.Simulation`/`Sim.UI`/`Sim.WorldGeneration` — Phase 9's
+runtime pipeline needed zero changes since it already depended only on
+`IWorldDesigner`.
+
+**Tests**: `AnthropicLLMClientTests.cs` (new) — a fully in-memory
+`FakeHttpTransport`, no automated test depends on a real API key or
+network call. Covers configuration, prompt preservation, model selection,
+authentication headers, the forced structured-output request shape,
+successful end-to-end parsing into a real `WorldSpecification`, `$type`
+injection staying inert, malformed/missing-tool-use responses, HTTP
+401/429/500, connection errors, and the timeout-vs-cancellation race —
+all failing cleanly, never throwing except the two specific,
+intentional exception types. `LLMWorldDesignerTests.cs`'s existing
+Anthropic stub test is unchanged and still passes.
+
+**Real-provider smoke test: not run** — no Anthropic (or any LLM
+provider) credentials exist in this environment's `.env.local`/OS
+environment. Stated plainly per this phase's explicit instruction, not
+claimed. See docs/PHASE_10_REAL_LLM.md "Real-provider smoke testing" for
+what running one would involve.
 
 ## Phase 7 detail
 

@@ -1,7 +1,12 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 9 — the full prompt-to-playable-world pipeline is wired end
-to end at runtime.** `WorldGenerationController` (Sim.Core) now drives
+Status: **Phase 10 — `AnthropicLLMClient` is a real, working LLM provider.**
+Selecting `LLM`/`Anthropic` mode in `RuntimeSimulationBootstrap` (Phase 9)
+now reaches a real Anthropic Messages API call (structured output via
+forced tool use — never free-text "please output JSON"), not an honest
+stub — see `docs/PHASE_10_REAL_LLM.md`. `OpenAiLLMClient`/`LocalLLMClient`
+remain stubs. Previously (Phase 9 status below): **the full
+prompt-to-playable-world pipeline is wired end to end at runtime.** `WorldGenerationController` (Sim.Core) now drives
 `IWorldDesigner` → `IWorldSpecificationValidator` → `WorldGenerator` in one
 place (extended, not replaced, from Phase 8's design→validate-only
 version — see §6c and `docs/PHASE_9_RUNTIME_PIPELINE.md`). A new thin
@@ -196,7 +201,12 @@ Assets/
       WorldDesign/                 Agent 5, Phase 7 — the AUTHORITATIVE AI world-content
                                  pipeline (IWorldDesigner, WorldDesignRequest/Outcome,
                                  MockWorldDesigner, LLMWorldDesigner, ILLMClient +
-                                 OpenAi/Anthropic/LocalLLMClient, WorldSpecificationJsonParser)
+                                 OpenAi/Anthropic/LocalLLMClient, WorldSpecificationJsonParser).
+                                 Phase 10: AnthropicLLMClient is a real integration (structured
+                                 output via forced tool use — WorldSpecificationToolSchema,
+                                 IHttpTransport/UnityWebRequestHttpTransport,
+                                 EnvironmentLlmCredentialsProvider, LLMRequestTimeoutException) —
+                                 see docs/PHASE_10_REAL_LLM.md. OpenAi/LocalLLMClient still stubs.
     Drone/                      Agent 2 — Rigidbody flight
     Camera/                     Agent 3 — FPV camera rig
     UI/                         Agent 3 + 11 — HUD, OSD; WorldGenerationUI +
@@ -254,6 +264,9 @@ docs/
                                  WorldGenerationRuntimeService, RuntimeSimulationBootstrap,
                                  mock vs. LLM mode, cancellation, threading, drone spawn
                                  integration, runtime scene setup, manual test checklist
+  PHASE_10_REAL_LLM.md          Phase 10: AnthropicLLMClient — the real provider, structured
+                                 output via forced tool use, configuration, security, testing,
+                                 cancellation/timeout, known limitations, future providers
   AI_INTEGRATION.md             superseded by OPENWORLD_REACTOR_INTEGRATION.md / AI_WORLD_DESIGNER.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
   FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
@@ -474,6 +487,20 @@ Full reasoning (state machine, cancellation-before-generation semantics,
 why Unity's `SynchronizationContext` makes the post-`await` synchronous
 tail main-thread-safe, mock vs. LLM mode, how the runtime scene is built,
 and everything not yet done) is in `docs/PHASE_9_RUNTIME_PIPELINE.md`.
+
+## 6e. Phase 10: AnthropicLLMClient becomes real
+
+`LLM`/`Anthropic` mode (§6d) now reaches a genuine Anthropic Messages API
+call instead of an honest "not yet implemented" stub. Nothing about the
+pipeline shape changed — `IWorldDesigner` is still the only abstraction
+anything outside `Sim.AI.WorldDesign` depends on, `WorldSpecification` is
+still the only contract, validation is still mandatory and unconditional.
+What's new is entirely inside `Sim.AI.WorldDesign`: real structured output
+(forced tool use with a strict JSON Schema, not "please output JSON" free
+text), a small `IHttpTransport` seam so the request/response logic is
+unit-testable without a real network call, and a generalized credentials
+lookup (`EnvironmentLlmCredentialsProvider`) that any future real provider
+in this namespace can reuse. Full detail in `docs/PHASE_10_REAL_LLM.md`.
 
 ## 7. Error handling strategy
 
