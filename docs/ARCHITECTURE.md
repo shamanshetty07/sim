@@ -1,6 +1,11 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 7 — AI World Designer is now the authoritative source of
+Status: **Phase 8 — Unity-side WorldGenerator builds a playable world from a
+validated WorldSpecification.** `WorldGenerationController` (Sim.Core) was
+migrated to drive `IWorldDesigner` directly (see §6b) — see
+`docs/WORLD_GENERATION.md` for the full Phase 8 architecture (terrain,
+environment, obstacles/course, checkpoints, spawn safety, lighting,
+weather, determinism, regeneration). Previously (Phase 7 status below):
 world content.** Following the Phase 6.5 investigation
 (`docs/REACTOR_TO_UNITY_ARCHITECTURE.md`) confirming OpenWorld Reactor
 cannot supply structured/3D world data in any form, the architecture
@@ -219,7 +224,9 @@ docs/
                                  what's verified vs. deferred, credential handling
   REACTOR_TO_UNITY_ARCHITECTURE.md  Phase 6.5: can any Reactor model give Unity a
                                  flyable 3D world? (No.) Options A-D, recommendation.
-  WORLD_GENERATION.md           spec schema + validation limits (still pending — Phase 8+)
+  WORLD_GENERATION.md           Phase 8: WorldGenerator architecture — terrain, environment,
+                                 obstacles/course, checkpoints, spawn safety, lighting, weather,
+                                 collision, determinism, regeneration, performance, limitations
   AI_INTEGRATION.md             superseded by OPENWORLD_REACTOR_INTEGRATION.md / AI_WORLD_DESIGNER.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
   FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
@@ -390,6 +397,30 @@ provider abstraction (`ILLMClient` — OpenAI/Claude/local, none configured
 yet), the `WorldSpecification.Course` addition, and the JSON-deserialization
 security boundary are in `docs/AI_WORLD_DESIGNER.md`.
 
+## 6c. Phase 8: WorldGenerator — WorldSpecification becomes a Unity scene
+
+`WorldGenerator` (`Assets/Scripts/WorldGeneration/WorldGenerator.cs`) is
+implemented: it deterministically builds a `GeneratedWorld` GameObject
+hierarchy (terrain, environment, obstacles/course, lighting, weather,
+spawn) from a validated `WorldSpecification`, with no dependency on
+`Sim.AI`, `Sim.AI.WorldDesign`, or anything Reactor-shaped — per this
+phase's explicit instruction, the dependency chain stops at
+`WorldSpecification`. Full architecture (terrain implementation choice,
+per-generator responsibilities, checkpoint system, spawn-safety rules,
+determinism, regeneration) is in `docs/WORLD_GENERATION.md`.
+
+`WorldGenerationController` (§7 below) was migrated from driving the
+Reactor-shaped `IWorldGenerationService`/`IReactorWorldAdapter` pipeline
+(Phase 6) to driving `IWorldDesigner` directly (Phase 7's contract already
+returns a `WorldSpecification`, no separate adapter stage needed) — the
+`WorldGenerationState` enum and overall state-machine shape are unchanged,
+per this phase's explicit "reuse it, don't build a competing one"
+instruction. `WorldGenerator` itself is a separate, later stage this
+controller does not yet call — an Editor tool
+(`WorldGenerationTestTool.cs`) composes `MockWorldDesigner` → validator →
+`WorldGenerator` manually for now; wiring a runtime UI to do the same is
+Phase 9 work.
+
 ## 7. Error handling strategy
 
 | Failure point | Behaviour |
@@ -399,16 +430,17 @@ security boundary are in `docs/AI_WORLD_DESIGNER.md`.
 | Adapted `WorldSpecification` fails validation | Phase 6: `WorldSpecificationValidator` is now real logic (`Assets/Scripts/WorldGeneration/Validation/WorldSpecificationValidator.cs`) — repairs what's safely repairable, rejects only what genuinely can't be (null spec, missing prompt). `WorldGenerationController` surfaces this as `WorldGenerationFailureReason.ValidationFailed`. |
 | Spec fails validation with unrecoverable errors (e.g. negative terrain size) | Pipeline stops before any Unity object is created; `ValidationResult.Errors` surfaced in the debug panel; UI falls back to the same three options as above. |
 | Spec has recoverable issues (missing seed, tree count over cap, vague/empty prompt) | Validator repairs in place (generate seed, clamp count, substitute sane defaults) and generation proceeds — "make something cool" must produce a world, not an error. |
-| Terrain/environment/obstacle generation throws mid-pipeline | Caught by `WorldGenerator` per stage; partial world is torn down, error surfaced, simulator does not crash. |
-| Generated spawn is unsafe (inside terrain/collider) | `SpawnGenerator` retries within bounds, then falls back to a known-safe default (world origin, above terrain) rather than failing the whole world. |
+| Terrain/environment/obstacle generation throws mid-pipeline | Phase 8: `WorldGenerator.Generate` wraps the whole pipeline in one try/catch; partial world is torn down (`Clear()`), error surfaced, simulator does not crash. |
+| Generated spawn is unsafe (inside terrain/collider) | **Revised Phase 8** (supersedes the "falls back to a known-safe default" behavior this row originally described): `SpawnResolver` tries the specified position, then each `AlternateSpawnPoints` entry in order, and if none are safe **fails generation cleanly** rather than silently relocating the drone — an explicit instruction for this phase. `WorldGenerator` tears down the partial world before returning that failure. See docs/WORLD_GENERATION.md "Spawn resolution". |
 | Save/load reads a spec from a newer/older schema version | `WorldSaveData.GenerationVersion` is checked; a mismatch is reported, not silently misapplied. |
 
 `WorldGenerationController` (`Assets/Scripts/Core/WorldGenerationController.cs`,
-implemented Phase 6) is the single state machine (`Idle → Requesting →
+implemented Phase 6, migrated Phase 8 to drive `IWorldDesigner` — see §6c)
+is the single state machine (`Idle → Requesting →
 Validating → Completed/Failed/Cancelled` — `WorldGenerationState`) that all
 of the above funnels through, so a future UI only ever needs to react to
 one state enum plus `LastErrorMessage`/`LastFailureReason` — it never talks
-to `IWorldGenerationService`, the adapter, or the validator directly. It
+to `IWorldDesigner` or the validator directly. It
 also guards against a stale, already-superseded generation attempt (the
 user clicking Generate again before a previous attempt finished)
 overwriting a newer attempt's result — see its class remarks.
@@ -426,10 +458,10 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 4 | AI World Designer | `Scripts/WorldGeneration/Models/*` (incl. `CourseSpecification`, Phase 7), `Scripts/WorldGeneration/Adapters/*` (Reactor-only, isolated) |
 | 5 | AI Integration Engineer | `Scripts/AI/WorldDesign/*` (authoritative, Phase 7) — `Scripts/AI/*` (Reactor client, Phases 5-6) is isolated/optional |
 | 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (real logic since Phase 6 — `WorldSpecificationValidator`, `WorldGenerationLimits`) |
-| 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs` |
-| 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` |
-| 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*`, `PrefabRegistry` |
-| 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*`, `Scripts/Gameplay/RaceManager.cs` |
+| 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs`, `GeneratedWorldResult.cs`, `Spawn/*` (implemented Phase 8) |
+| 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` (implemented Phase 8 — Unity `Terrain`, see docs/WORLD_GENERATION.md) |
+| 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*` (`EnvironmentGenerator`, `IWorldPrefabRegistry`/`PrimitiveWorldPrefabRegistry` — implemented Phase 8) |
+| 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*`, `Scripts/Gameplay/{CheckpointManager,CheckpointTrigger,RaceState}.cs` (implemented Phase 8) |
 | 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout |
 | 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5 |
 | 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` |

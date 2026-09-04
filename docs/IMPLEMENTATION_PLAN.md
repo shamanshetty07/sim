@@ -14,13 +14,13 @@ check it before assuming a phase needs to start from scratch.
 | 6 | Real OpenWorld Reactor auth + validation logic + state model | ✅ Done — see below. Real API key provided; identified OpenWorld Reactor as Reactor (reactor.inc)/LingBot (Ant Group) via public docs; verified real authentication with a live, successful API call. Full generation integration deferred (deliberate, user-confirmed) — see docs/OPENWORLD_REACTOR_INTEGRATION.md. |
 | 6.5 | Investigate whether any Reactor model can give Unity a usable 3D world | ✅ Done — checked all 8 hosted models. None export mesh/point-cloud/depth/GLTF/USD/FBX or structured scene state; video-only across the platform. See docs/REACTOR_TO_UNITY_ARCHITECTURE.md. Recommendation given (Option D diagnosis → Option C path); implementation not started, awaiting user direction. |
 | 7 | AI World Designer + WorldSpecification generation | ✅ Done — `IWorldDesigner`/`WorldDesignRequest`/`WorldDesignOutcome`, `MockWorldDesigner` (rich, deterministic, non-interpretive), `LLMWorldDesigner` + `ILLMClient` (OpenAI/Anthropic/Local — all honest stubs, none configured), `WorldSpecificationJsonParser` (Newtonsoft.Json, `TypeNameHandling.None`), new `CourseSpecification` model. Answers 6.5's "where does the intelligence come from" question. See docs/AI_WORLD_DESIGNER.md. |
-| 8 | Unity-side procedural world construction (`WorldGenerator`) | ⬜ Not started — this is what phase 7 was provisionally labeled before the architecture pivot; renumbered here to make room for the AI World Designer phase the pivot required first |
-| 9 | Prompt UI | ⬜ Not started |
-| 10 | Procedural terrain | ⬜ Not started |
-| 11 | Environment objects | ⬜ Not started |
-| 12 | Racing obstacles | ⬜ Not started |
+| 8 | Unity-side procedural world construction (`WorldGenerator`) | ✅ Done — `WorldGenerator` + `TerrainGenerator`/`EnvironmentGenerator`/`ObstacleGenerator`/`LightingGenerator`/`WeatherGenerator`/`SpawnResolver`/`WorldSeedManager`, `CheckpointManager`/`CheckpointTrigger`, Editor tooling, EditMode tests. See docs/WORLD_GENERATION.md. This phase substantially covers what rows 10-12 below originally described (terrain/environment/obstacles were all built together, not as separate later phases) — see the note under this table. |
+| 9 | Prompt UI + wiring `WorldGenerationController` → `WorldGenerator` at runtime | ⬜ Not started |
+| 10 | Procedural terrain | ✅ Covered by Phase 8 (`TerrainGenerator`) — kept as a row for traceability against the original brief, not separate remaining work |
+| 11 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
+| 12 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
 | 13 | Save/load | ⬜ Not started |
-| 14 | Performance optimization | ⬜ Not started |
+| 14 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
 | 15 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 
 Numbering has diverged from the original 14-phase brief (the 6.5
@@ -189,6 +189,82 @@ guarded cancellation against a stale/superseded call overwriting a newer
 one's state, but the same protection was missing from the
 success/failure/validation branches — fixed by applying one consistent
 `IsCurrent(token)` guard everywhere shared state is mutated.
+
+## Phase 8 detail
+
+Built the Unity-side half of the pipeline: `WorldSpecification` (validated)
+→ `WorldGenerator` → a playable `GeneratedWorld` GameObject hierarchy, with
+no dependency on `Sim.AI`/`Sim.AI.WorldDesign`/Reactor anywhere in the
+generation code, per this phase's explicit instruction.
+
+**New files** — `Assets/Scripts/WorldGeneration/`: `WorldSeedManager.cs`
+(per-stage deterministic `System.Random`, never `UnityEngine.Random`
+global state), `WorldGenerator.cs`, `GeneratedWorldResult.cs`; `Terrain/`:
+`TerrainGenerator.cs` (Unity built-in `Terrain`, free collision via
+`TerrainCollider`, deterministic fractal Perlin noise, distinct height
+profiles per `TerrainType`), `TerrainGenerationResult.cs`; `Environment/`:
+`EnvironmentGenerator.cs`, `IWorldPrefabRegistry.cs` +
+`PrimitiveWorldPrefabRegistry.cs` (one registry handles both environment
+objects and obstacles — no scattered `Resources.Load` calls); `Obstacles/`:
+`ObstacleGenerator.cs` (explicit positions always respected; auto-generates
+the gap between `Course.GateCount` and explicitly-specified gates along a
+`Course.Style`-shaped deterministic path — verified in tests that
+"technical" produces measurably tighter spacing than "high_speed"),
+`ObstacleGenerationResult.cs`, `CheckpointDefinition.cs`; `Lighting/`:
+`LightingGenerator.cs`; `Weather/`: `WeatherGenerator.cs`; `Spawn/`:
+`SpawnResolver.cs` (checks the *actually generated* terrain/colliders —
+`WorldSpecificationValidator` only ever sees numeric values, never a built
+scene) + `SpawnResolutionResult.cs`. `Assets/Scripts/Gameplay/`:
+`CheckpointManager.cs` (plain C# class, race-state only),
+`CheckpointTrigger.cs` (MonoBehaviour, visual/trigger only — the two stay
+deliberately separate), `RaceState.cs`. `Assets/Scripts/Utilities/`:
+`UnityLifecycleUtility.cs` (Destroy vs. DestroyImmediate depending on
+Play/Edit mode — needed because generation code must work correctly from
+both an Editor tool and, eventually, runtime). `Assets/Scripts/Editor/`:
+`WorldGenerationTestTool.cs` (`FPV Sim > World > Generate Test World (Mock
+Designer)` — runs the brief's exact Himalayan-course prompt through
+`MockWorldDesigner` → validator → `WorldGenerator`, places the existing
+drone rig at the resolved spawn; `Clear Generated World`).
+
+**No new/duplicate models** — every generator was written against the
+exact existing `WorldSpecification`/`TerrainSpecification`/
+`ObjectSpecification`/`ObstacleSpecification`/`WeatherSpecification`/
+`LightingSpecification`/`SpawnSpecification`/`CourseSpecification`/
+`WorldGenerationMetadata` from Phases 5 and 7 — none needed a field added
+or changed.
+
+**Deliberate behavior change from Phase 2's original sketch**: an unsafe
+spawn (specified position, and every alternate) now fails generation
+cleanly instead of falling back to an arbitrary "safe" position — an
+explicit instruction this phase, documented in `docs/ARCHITECTURE.md`'s
+error-handling table and `docs/WORLD_GENERATION.md`.
+
+**`WorldGenerationController` migrated** from the Reactor-shaped
+`IWorldGenerationService`/`IReactorWorldAdapter` pipeline (Phase 6) to
+`IWorldDesigner` directly (Phase 7's contract already returns a
+`WorldSpecification`) — reused, not replaced, per this phase's explicit
+instruction; verified nothing in production code depended on the old
+constructor before migrating (only its own test did, updated alongside).
+
+**Tests**: `WorldGeneratorTests.cs`, `WorldSeedManagerTests.cs` — real,
+runnable EditMode tests (Unity's Editor process has a live GameObject/
+Physics/Terrain system outside Play mode) covering all 12 scenarios this
+phase asked for. Not coverable without a live Editor's Play mode: anything
+needing the Player loop to actually tick (FixedUpdate physics response,
+the drone genuinely colliding while flying) — flagged as needing manual
+verification, not silently skipped.
+
+**Bugs caught and fixed during review before commit**: two unused `using`
+directives (harmless but cleaned up); a `sharedMaterial.color` mutation in
+the water-feature primitive builder that would have recolored every other
+primitive in the scene sharing Unity's default material (fixed to
+`.material`, which creates a per-instance copy); confirmed (rather than
+assumed) that C#'s enclosing-namespace lookup rules make
+`Sim.WorldGeneration.{Terrain,Environment,Obstacles}` code able to see
+`WorldSeedManager` (declared directly in the parent `Sim.WorldGeneration`)
+without an explicit `using` — verified against the language spec rather
+than left as an assumption, since getting this wrong would have been a
+real compile error.
 
 ## Phase 7 detail
 

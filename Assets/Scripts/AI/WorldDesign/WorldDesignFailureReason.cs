@@ -20,6 +20,9 @@ namespace Sim.AI.WorldDesign
 
         Cancelled,
 
+        /// <summary>The designer succeeded, but the resulting WorldSpecification failed validation. Added Phase 8 so WorldGenerationController (which now orchestrates design + validation together) has one unified failure vocabulary.</summary>
+        ValidationFailed,
+
         Unknown
     }
 }

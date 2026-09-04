@@ -2,8 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using Sim.AI;
-using Sim.WorldGeneration.Adapters;
+using Sim.AI.WorldDesign;
 using Sim.WorldGeneration.Models;
 using Sim.WorldGeneration.Validation;
 using Debug = UnityEngine.Debug;
@@ -11,23 +10,32 @@ using Debug = UnityEngine.Debug;
 namespace Sim.Core
 {
     /// <summary>
-    /// The single entry point a future UI (Phase 8) needs: GenerateWorldAsync(prompt) /
-    /// Cancel(). Owns the Idle -&gt; Requesting -&gt; Validating -&gt; Completed/Failed/Cancelled
-    /// state machine (docs/ARCHITECTURE.md §7) and drives IWorldGenerationService ->
-    /// IReactorWorldAdapter -> IWorldSpecificationValidator in order. The UI never talks to
-    /// any of those three directly, and never needs to know OpenWorld Reactor, Mock, or any
-    /// other provider exists — it only observes <see cref="State"/> (via
+    /// The single entry point a future UI needs: GenerateWorldAsync(prompt) / Cancel(). Owns
+    /// the Idle -&gt; Requesting -&gt; Validating -&gt; Completed/Failed/Cancelled state machine
+    /// and drives IWorldDesigner -&gt; IWorldSpecificationValidator in order. The UI never talks
+    /// to either directly, and never needs to know which IWorldDesigner (Mock or a real LLM
+    /// provider) is active — it only observes <see cref="State"/> (via
     /// <see cref="StateChanged"/>) and reads <see cref="LastValidSpecification"/> /
     /// <see cref="LastErrorMessage"/> once a terminal state is reached.
     ///
+    /// Migrated Phase 8 from the Phase 6 version, which drove the Reactor-shaped
+    /// IWorldGenerationService/IReactorWorldAdapter pipeline. Per the Phase 7 architecture
+    /// pivot (OpenWorld Reactor is no longer authoritative — see docs/AI_WORLD_DESIGNER.md)
+    /// and this phase's explicit "reuse WorldGenerationController and its state machine, don't
+    /// create a competing one" instruction, this class was repurposed rather than duplicated:
+    /// the WorldGenerationState enum, the overall Idle/Requesting/Validating/terminal-state
+    /// shape, the stale-call guard, cancellation handling, and the [WorldGeneration] logging
+    /// convention are all unchanged — only the "how do we get a WorldSpecification" internals
+    /// changed, since IWorldDesigner returns one directly (no separate adapter stage the way
+    /// the Reactor pipeline needed). Nothing in production code depended on the old
+    /// constructor shape (verified before migrating); only its own test needed updating.
+    ///
     /// Plain C# class, not a MonoBehaviour — Unity lifecycle (a Canvas/HUD script) owns an
-    /// instance of this and forwards Generate/Cancel button clicks into it, matching the
-    /// project's "keep gameplay/orchestration logic independent from rendering" rule.
+    /// instance of this and forwards Generate/Cancel button clicks into it.
     /// </summary>
     public sealed class WorldGenerationController
     {
-        private readonly IWorldGenerationService _service;
-        private readonly IReactorWorldAdapter _adapter;
+        private readonly IWorldDesigner _designer;
         private readonly IWorldSpecificationValidator _validator;
 
         private CancellationTokenSource _cts;
@@ -35,26 +43,22 @@ namespace Sim.Core
         public WorldGenerationState State { get; private set; } = WorldGenerationState.Idle;
         public WorldSpecification LastValidSpecification { get; private set; }
         public string LastErrorMessage { get; private set; }
-        public WorldGenerationFailureReason LastFailureReason { get; private set; } = WorldGenerationFailureReason.None;
+        public WorldDesignFailureReason LastFailureReason { get; private set; } = WorldDesignFailureReason.None;
 
         public event Action<WorldGenerationState> StateChanged;
 
-        public WorldGenerationController(
-            IWorldGenerationService service,
-            IReactorWorldAdapter adapter,
-            IWorldSpecificationValidator validator)
+        public WorldGenerationController(IWorldDesigner designer, IWorldSpecificationValidator validator)
         {
-            _service = service ?? throw new ArgumentNullException(nameof(service));
-            _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+            _designer = designer ?? throw new ArgumentNullException(nameof(designer));
             _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         }
 
         /// <summary>
-        /// Runs one full generation attempt. Cancels any generation already in flight first, so
-        /// calling this again is exactly "Retry"/"Generate a new one" — the caller never needs
-        /// to call Cancel() first itself.
+        /// Runs one full design+validation attempt. Cancels any attempt already in flight
+        /// first, so calling this again is exactly "Retry"/"Generate a new one" — the caller
+        /// never needs to call Cancel() first itself.
         /// </summary>
-        public async Task GenerateWorldAsync(string prompt, int? seed = null, WorldScale? scale = null)
+        public async Task GenerateWorldAsync(string prompt, int? seed = null, WorldDesignConstraints constraints = null)
         {
             CancelInternal();
             var cts = new CancellationTokenSource();
@@ -62,17 +66,17 @@ namespace Sim.Core
             CancellationToken token = cts.Token;
 
             LastErrorMessage = null;
-            LastFailureReason = WorldGenerationFailureReason.None;
+            LastFailureReason = WorldDesignFailureReason.None;
 
-            WorldGenerationRequest request;
+            WorldDesignRequest request;
             try
             {
-                request = new WorldGenerationRequest(prompt, seed, scale);
+                request = new WorldDesignRequest(prompt, seed, constraints);
             }
             catch (ArgumentException ex)
             {
                 LastErrorMessage = "World generation failed.";
-                LastFailureReason = WorldGenerationFailureReason.InvalidResponse;
+                LastFailureReason = WorldDesignFailureReason.InvalidResponse;
                 Debug.LogWarning($"[WorldGeneration] Invalid request: {ex.Message}");
                 SetState(WorldGenerationState.Failed);
                 return;
@@ -82,10 +86,10 @@ namespace Sim.Core
             SetState(WorldGenerationState.Requesting);
 
             var stopwatch = Stopwatch.StartNew();
-            WorldGenerationOutcome outcome;
+            WorldDesignOutcome outcome;
             try
             {
-                outcome = await _service.GenerateWorldAsync(request, token);
+                outcome = await _designer.DesignWorldAsync(request, token);
             }
             catch (OperationCanceledException)
             {
@@ -94,14 +98,13 @@ namespace Sim.Core
             }
             catch (Exception ex)
             {
-                // Anything the service throws that isn't OperationCanceledException is a
-                // programmer-error-shaped failure (the service contract is supposed to report
-                // expected failures via WorldGenerationOutcome, not throw) — still must not
-                // crash the caller. Logged with full detail; the UI-facing message stays generic.
-                Debug.LogError($"[WorldGeneration] Unexpected exception from IWorldGenerationService: {ex}");
+                // Anything the designer throws that isn't OperationCanceledException is a
+                // programmer-error-shaped failure (the contract is supposed to report expected
+                // failures via WorldDesignOutcome, not throw) — still must not crash the caller.
+                Debug.LogError($"[WorldGeneration] Unexpected exception from IWorldDesigner: {ex}");
                 if (!IsCurrent(token)) return;
                 LastErrorMessage = "World generation failed.";
-                LastFailureReason = WorldGenerationFailureReason.Unknown;
+                LastFailureReason = WorldDesignFailureReason.Unknown;
                 SetState(WorldGenerationState.Failed);
                 return;
             }
@@ -112,13 +115,12 @@ namespace Sim.Core
                 return;
             }
 
-            // From here on, every branch mutates shared state (LastErrorMessage/
-            // LastValidSpecification/State) — guard each one against a stale, already-
-            // superseded call (see GenerateWorldAsync's remarks) rather than trusting that a
-            // concrete IWorldGenerationService always honors the cancellation token promptly.
+            // From here on, every branch mutates shared state — guard each one against a
+            // stale, already-superseded call rather than trusting that a concrete
+            // IWorldDesigner always honors the cancellation token promptly.
             if (!outcome.Success)
             {
-                Debug.LogWarning($"[WorldGeneration] Generation failed: {outcome.FailureReason} — {outcome.ErrorMessage}");
+                Debug.LogWarning($"[WorldGeneration] Design failed: {outcome.FailureReason} — {outcome.ErrorMessage}");
                 if (!IsCurrent(token)) return;
                 LastErrorMessage = "World generation failed.";
                 LastFailureReason = outcome.FailureReason;
@@ -126,13 +128,12 @@ namespace Sim.Core
                 return;
             }
 
-            Debug.Log($"[WorldGeneration] Generation completed in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+            Debug.Log($"[WorldGeneration] Design completed in {stopwatch.Elapsed.TotalSeconds:F1}s.");
 
             if (!IsCurrent(token)) return;
             SetState(WorldGenerationState.Validating);
 
-            WorldSpecification specification = _adapter.Adapt(outcome.Result, request);
-            ValidationResult validation = _validator.Validate(specification);
+            ValidationResult validation = _validator.Validate(outcome.Specification);
 
             if (!validation.IsValid)
             {
@@ -141,7 +142,7 @@ namespace Sim.Core
 
                 if (!IsCurrent(token)) return;
                 LastErrorMessage = "World specification failed validation.";
-                LastFailureReason = WorldGenerationFailureReason.ValidationFailed;
+                LastFailureReason = WorldDesignFailureReason.ValidationFailed;
                 SetState(WorldGenerationState.Failed);
                 return;
             }
@@ -166,14 +167,11 @@ namespace Sim.Core
 
         private void HandleCancelled(CancellationToken token)
         {
-            // Only reflect the cancellation if it's still the current attempt's token — an
-            // older, already-superseded generation's cancellation must not stomp on a newer
-            // one that's already progressed past it.
             if (!IsCurrent(token)) return;
 
             Debug.Log("[WorldGeneration] Generation cancelled.");
             LastErrorMessage = "World generation was cancelled.";
-            LastFailureReason = WorldGenerationFailureReason.Cancelled;
+            LastFailureReason = WorldDesignFailureReason.Cancelled;
             SetState(WorldGenerationState.Cancelled);
         }
 

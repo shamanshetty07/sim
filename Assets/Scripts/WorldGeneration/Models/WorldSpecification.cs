@@ -4,8 +4,8 @@ namespace Sim.WorldGeneration.Models
 {
     /// <summary>
     /// Unity's own normalized, bounded description of what to build — the *only* input type
-    /// WorldGenerator (still not implemented — see docs/IMPLEMENTATION_PLAN.md) will accept,
-    /// always after validation.
+    /// WorldGenerator (Assets/Scripts/WorldGeneration/WorldGenerator.cs, implemented Phase 8 —
+    /// see docs/WORLD_GENERATION.md) accepts, always after validation.
     ///
     /// As of Phase 7, the authoritative producer of this type is the AI World Designer
     /// (<c>IWorldDesigner</c> — a general-purpose LLM interpreting the prompt directly into

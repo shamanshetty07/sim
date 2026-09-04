@@ -222,7 +222,7 @@ namespace Sim.EditorTools
         // Ground + lighting
         // ----------------------------------------------------------------------------
 
-        private static void BuildGroundAndLight()
+        internal static void BuildGroundAndLight()
         {
             GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "Ground";
@@ -241,7 +241,7 @@ namespace Sim.EditorTools
         // FPV camera (Phase 4)
         // ----------------------------------------------------------------------------
 
-        private static GameObject BuildFpvCamera(Transform mount)
+        internal static GameObject BuildFpvCamera(Transform mount)
         {
             var cameraGO = new GameObject("FPV Camera");
             Undo.RegisterCreatedObjectUndo(cameraGO, "Create FPV Camera");
@@ -267,7 +267,7 @@ namespace Sim.EditorTools
         // OSD canvas (Phase 4)
         // ----------------------------------------------------------------------------
 
-        private static GameObject BuildOsdCanvas(DroneController controller)
+        internal static GameObject BuildOsdCanvas(DroneController controller)
         {
             if (controller == null)
                 Debug.LogWarning("DroneRigBuilder: created an OSD Canvas with no DroneController to read telemetry from — assign one manually.");
