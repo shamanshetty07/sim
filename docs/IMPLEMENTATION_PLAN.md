@@ -11,8 +11,8 @@ check it before assuming a phase needs to start from scratch.
 | 3 | Drone flies correctly | ✅ Done — Rigidbody physics, Angle/Acro/Horizon, Input System + keyboard fallback, EditMode tests. Unverified in a live Editor (none available here). |
 | 4 | FPV camera + OSD | ✅ Done — camera rig, HUD/telemetry UI, editor tooling extended, EditMode tests. Unverified in a live Editor (none available here). |
 | 5 | World-generation data contracts (prompt-driven, OpenWorld Reactor-shaped) | ✅ Done — `WorldGenerationRequest`, `IWorldGenerationService`, `ReactorWorldResult`, `ReactorWorldAdapter`, re-scoped `WorldSpecification`, EditMode tests. No real Reactor integration (none available to inspect). Unverified in a live Editor. |
-| 6 | Real Mock service (multiple examples, prompt-aware for dev/testing) + `WorldSpecificationValidator` logic | ⬜ Not started |
-| 7 | Connect real AI service (OpenWorld Reactor) | ⬜ Blocked — no SDK/API/docs found in this environment; awaiting access from user |
+| 6 | Real OpenWorld Reactor auth + validation logic + state model | ✅ Done — see below. Real API key provided; identified OpenWorld Reactor as Reactor (reactor.inc)/LingBot (Ant Group) via public docs; verified real authentication with a live, successful API call. Full generation integration deferred (deliberate, user-confirmed) — see docs/OPENWORLD_REACTOR_INTEGRATION.md. |
+| 7 | Live session/streaming integration decision + Unity-side world construction | ⬜ Not started — blocked on choosing bridge-process vs. native-client direction for the deferred piece from Phase 6 |
 | 8 | Prompt UI | ⬜ Not started |
 | 9 | Procedural terrain | ⬜ Not started |
 | 10 | Environment objects | ⬜ Not started |
@@ -127,21 +127,81 @@ No `WorldGenerator`/terrain/environment/obstacle generation yet (Phase
 7+ — unchanged from before). No real OpenWorld Reactor integration
 (blocked on access). Not started this phase, per explicit scope.
 
+## Phase 6 detail
+
+User provided a real OpenWorld Reactor API key mid-session. Before touching
+it: searched for real public docs (WebSearch/WebFetch, not guessing) and
+identified OpenWorld Reactor as **Reactor (reactor.inc)**, hosting
+**LingBot**/**LingBot World 2** (Ant Group models) — an exact match for the
+project's original "Reactor Lingbot" naming. Fetched real API docs
+(docs.reactor.inc), confirmed the real auth schema (`POST
+https://api.reactor.inc/tokens`, `Reactor-API-Key` header, documented
+request/response JSON), and ran one real, minimal, scoped test call via
+curl — **HTTP 200, valid JWT returned** — before writing any Unity code
+against it. Discovered the real product is a live steerable video session
+(LingBot World 2: upload image, `set_prompt`, `start`, then WASD/camera-
+steered real-time video at 48fps) with no Unity/C# SDK — fundamentally
+incompatible with the project's one-shot "prompt in, world description
+out" interface shape. Presented this to the user and got an explicit
+decision: defer the live-session integration, ship everything else. Full
+detail: `docs/OPENWORLD_REACTOR_INTEGRATION.md`.
+
+Credential handling: API key stored only in `.env.local` at the repo root
+(never under `Assets/`, mode 600, already covered by the Phase 2
+`.gitignore` pattern — verified with `git check-ignore` before writing
+anything else). `IReactorCredentialsProvider` made injectable specifically
+so automated tests never depend on (or accidentally exercise) whatever's
+really configured on the machine running them — the one real network call
+this phase made was manual (curl), not part of the test suite. `git
+status`/`git diff` and a full-history grep for the key were run before
+every commit and push this phase.
+
+Files added: `Assets/Scripts/AI/{IReactorCredentialsProvider,
+EnvironmentReactorCredentialsProvider,ReactorApiException,ReactorTokenResult}.cs`;
+`Assets/Scripts/WorldGeneration/Validation/{IWorldSpecificationValidator,
+WorldSpecificationValidator,WorldGenerationLimits}.cs` (first real
+validation logic — Phase 5 shipped only data contracts);
+`Assets/Scripts/Core/{WorldGenerationState,WorldGenerationController}.cs`
+(the `GenerateWorld(prompt)`/`Cancel()` entry point + state machine
+documented since Phase 2 but not built until now); 6 new/rewritten
+EditMode test files; `docs/OPENWORLD_REACTOR_INTEGRATION.md`.
+
+Files modified: `Assets/Scripts/AI/OpenWorldReactorWorldGenerationService.cs`
+(real `MintSessionTokenAsync` via `UnityWebRequest` against the verified
+endpoint/schema; `GenerateWorldAsync` now returns structured
+`WorldGenerationOutcome`s instead of throwing), `WorldGenerationFailureReason.cs`
+(added `Unavailable`/`ValidationFailed`/`NotImplemented`),
+`MockWorldGenerationService.cs` (deterministic seed derivation, simulated
+delay, cancellation), `docs/ARCHITECTURE.md`, `.env.local` created (not
+committed).
+
+Bugs caught and fixed during review before commit: a dead ternary in
+`WorldSpecificationValidator.RepairDimension` where both branches evaluated
+to the same value (leftover from an edit); `WorldGenerationController`
+guarded cancellation against a stale/superseded call overwriting a newer
+one's state, but the same protection was missing from the
+success/failure/validation branches — fixed by applying one consistent
+`IsCurrent(token)` guard everywhere shared state is mutated.
+
 ## Notes / decisions carried forward
 
 - No Unity Editor in this environment — every phase's "compile" step is a
   careful manual review, not an actual Editor compile. Flag this at each
   phase summary; ask the user to open the project in their Editor at
   natural checkpoints (end of Phase 3 is the first one worth doing).
-- OpenWorld Reactor (the world-generation backend, formerly referred to as
-  "Reactor Lingbot" — renamed/clarified by the user in Phase 5): no
-  SDK/API/docs found in this environment as of Phase 5. Access needed to
-  complete `OpenWorldReactorWorldGenerationService`, currently a stub that
-  throws `ReactorNotConfiguredException`. See `docs/WORLD_SPECIFICATION.md`
-  "Open questions" for the exact checklist. Mock service is the working
-  path in the meantime — Phase 5's `MockWorldGenerationService` is
-  intentionally minimal/non-interpretive; Phase 6 builds a version worth
-  developing against.
+- OpenWorld Reactor (the world-generation backend, formerly "Reactor
+  Lingbot") is **identified for real as of Phase 6**: Reactor (reactor.inc),
+  LingBot/LingBot World 2 (Ant Group). Real authentication verified working
+  with a live API key. Full generation integration deferred — see
+  `docs/OPENWORLD_REACTOR_INTEGRATION.md` for exactly why (it's a live
+  video session, not a description-generator) and what's needed to
+  proceed (a decision between a companion bridge process and a native
+  client — not yet made). Credentials live only in a local, gitignored
+  `.env.local` — never committed, never logged.
+- Mock service (`MockWorldGenerationService`) is the working end-to-end
+  path for everything downstream of world generation — deterministic,
+  supports simulated delay/cancellation, still deliberately non-
+  interpretive (doesn't parse the prompt to decide content).
 - Target packages pinned in `Packages/manifest.json`: Input System 1.7.0,
   TextMeshPro 3.0.6, Test Framework 1.1.33, UnityWebRequest module (for the
   future OpenWorld Reactor client, transport mechanism still unknown).

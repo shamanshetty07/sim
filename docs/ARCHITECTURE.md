@@ -1,6 +1,13 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 5 — world-generation data contracts.** This document is the
+Status: **Phase 6 — real OpenWorld Reactor auth + validation + state model.**
+See `docs/OPENWORLD_REACTOR_INTEGRATION.md` for the full Phase 6 findings —
+OpenWorld Reactor is confirmed to be Reactor (reactor.inc)/LingBot (Ant
+Group), real authentication was verified against the live API, but the
+product's actual shape (a live steerable video session, not a one-shot
+world-description generator) means full generation integration is a
+deliberately deferred, separately-scoped decision, not implemented yet.
+This document is the
 contract the rest of the project is built against. Update it when a phase
 changes a decision made here; don't let code and doc drift apart.
 
@@ -164,14 +171,15 @@ Assets/
                                  WorldSpecification and its sub-models (see
                                  docs/WORLD_SPECIFICATION.md)
       Adapters/                  Agent 4/5 — ReactorWorldAdapter: ReactorWorldResult -> WorldSpecification
-      Validation/                Agent 6 — limits + repair
+      Validation/                Agent 6 — limits + repair (real logic since Phase 6)
       Terrain/                   Agent 8 — terrain algorithms
       Environment/                Agent 9 — prefab placement, PrefabRegistry
       Obstacles/                  Agent 10 — gates/rings/checkpoints
       Persistence/                Agent 13 — WorldSaveData, save/load
       (root)                      Agent 7 — WorldGenerator orchestrator
     Gameplay/                   RaceManager, CrashDetector
-    Core/                       Agent 1 — GameEvents, ServiceLocator, pipeline state
+    Core/                       Agent 1 — WorldGenerationController + WorldGenerationState
+                                 (implemented Phase 6); GameEvents/ServiceLocator still pending
     Utilities/                  DeterministicRandom, MathX, CurveUtility
   Prefabs/
   Materials/
@@ -184,8 +192,10 @@ docs/
   ARCHITECTURE.md               this file
   WORLD_SPECIFICATION.md        prompt -> OpenWorld Reactor -> adapter -> WorldSpecification
                                  pipeline, what Unity owns vs. what Reactor owns
+  OPENWORLD_REACTOR_INTEGRATION.md  Phase 6: real Reactor identification/auth findings,
+                                 what's verified vs. deferred, credential handling
   WORLD_GENERATION.md           spec schema + validation limits (Phase 6+)
-  AI_INTEGRATION.md             provider contract, OpenWorld Reactor notes (Phase 6/7)
+  AI_INTEGRATION.md             provider contract, superseded by OPENWORLD_REACTOR_INTEGRATION.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
   FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
 ```
@@ -291,23 +301,51 @@ guessed at.
   shell/console command. This applies whether the payload is structured
   data or a native asset reference.
 
+## 6a. Phase 6 finding: what OpenWorld Reactor actually is
+
+Phase 6 identified OpenWorld Reactor as **Reactor (reactor.inc)**, hosting
+**LingBot**/**LingBot World 2** (Ant Group models) — confirmed via public
+documentation and a real, successful authenticated API call. Full detail,
+including exactly what was and wasn't verified, is in
+`docs/OPENWORLD_REACTOR_INTEGRATION.md`. The one architecturally important
+fact for this document: **LingBot World 2 is a live, steerable video
+session, not a one-shot "prompt in, world description out" service, and has
+no Unity/C# SDK.** §1/§6's "AI decides what, Unity decides how" and the
+`ReactorWorldResult`/adapter design (§1, revised Phase 5) anticipated
+Reactor might return rich scene/asset data instead of clean structured
+data — the reality is a further step beyond even that: continuous video,
+not a retrievable representation at all. Completing real generation
+integration is therefore a deliberately deferred, separately-scoped
+decision (bridge process vs. native client — see the integration doc), not
+attempted blind in Phase 6. What Phase 6 *did* implement for real:
+authentication (`OpenWorldReactorWorldGenerationService.MintSessionTokenAsync`,
+a genuine `UnityWebRequest` call against the verified real endpoint/schema),
+real `WorldSpecificationValidator` logic, and the
+`WorldGenerationController` state machine described in §7 below (previously
+documented as a design intent, not yet built until this phase).
+
 ## 7. Error handling strategy
 
 | Failure point | Behaviour |
 |---|---|
-| Backend request fails (network/timeout/not configured/etc.) | `WorldGenerationOutcome.Success = false` with a `WorldGenerationFailureReason`; UI shows "World generation failed." with **Retry / Use last valid world / Use example world**. Never surfaces raw exception text as the primary message. |
-| `ReactorWorldResult`'s structured payload can't be parsed, or its native asset reference can't be resolved | **Not yet applicable** — Phase 5's `ReactorWorldAdapter` only maps the fields it can populate safely (name/description/seed/metadata/prompt) and does not attempt to parse `StructuredPayloadJson` or resolve `NativeAssetReference` at all yet (there's no real payload shape to parse against). Once that parsing is added (Phase 6/7), it must fail closed — reject rather than pass a partial/best-guess `WorldSpecification` downstream — logged with the offending payload (truncated), not shown to the player. |
+| Backend request fails (network/timeout/not configured/etc.) | `WorldGenerationOutcome.Success = false` with a `WorldGenerationFailureReason` (Phase 6: implemented for real in `OpenWorldReactorWorldGenerationService` and driven end-to-end by `WorldGenerationController`, see §6a); UI shows "World generation failed." with **Retry / Use last valid world / Use example world**. Never surfaces raw exception text as the primary message. |
+| `ReactorWorldResult`'s structured payload can't be parsed, or its native asset reference can't be resolved | **Still not applicable** — real OpenWorld Reactor output turns out to be neither of those (see §6a) for the one model researched; `ReactorWorldAdapter` still only maps the fields it can populate safely. Revisit if/when a payload shape actually needs parsing. |
+| Adapted `WorldSpecification` fails validation | Phase 6: `WorldSpecificationValidator` is now real logic (`Assets/Scripts/WorldGeneration/Validation/WorldSpecificationValidator.cs`) — repairs what's safely repairable, rejects only what genuinely can't be (null spec, missing prompt). `WorldGenerationController` surfaces this as `WorldGenerationFailureReason.ValidationFailed`. |
 | Spec fails validation with unrecoverable errors (e.g. negative terrain size) | Pipeline stops before any Unity object is created; `ValidationResult.Errors` surfaced in the debug panel; UI falls back to the same three options as above. |
 | Spec has recoverable issues (missing seed, tree count over cap, vague/empty prompt) | Validator repairs in place (generate seed, clamp count, substitute sane defaults) and generation proceeds — "make something cool" must produce a world, not an error. |
 | Terrain/environment/obstacle generation throws mid-pipeline | Caught by `WorldGenerator` per stage; partial world is torn down, error surfaced, simulator does not crash. |
 | Generated spawn is unsafe (inside terrain/collider) | `SpawnGenerator` retries within bounds, then falls back to a known-safe default (world origin, above terrain) rather than failing the whole world. |
 | Save/load reads a spec from a newer/older schema version | `WorldSaveData.GenerationVersion` is checked; a mismatch is reported, not silently misapplied. |
 
-The `WorldGenerationController` (Core) is the single state machine
-(`Idle → Requesting → Validating → Generating → Complete/Failed`) that all of
-the above funnels through, so the UI only ever needs to react to one state
-enum plus an optional error message — it never talks to the AI or generator
-layers directly.
+`WorldGenerationController` (`Assets/Scripts/Core/WorldGenerationController.cs`,
+implemented Phase 6) is the single state machine (`Idle → Requesting →
+Validating → Completed/Failed/Cancelled` — `WorldGenerationState`) that all
+of the above funnels through, so a future UI only ever needs to react to
+one state enum plus `LastErrorMessage`/`LastFailureReason` — it never talks
+to `IWorldGenerationService`, the adapter, or the validator directly. It
+also guards against a stale, already-superseded generation attempt (the
+user clicking Generate again before a previous attempt finished)
+overwriting a newer attempt's result — see its class remarks.
 
 ## 8. Agent responsibilities (reference)
 
@@ -321,7 +359,7 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 3 | FPV Camera + OSD Engineer | `Scripts/Camera/*`, `Scripts/UI/FPVHUD.cs`, `TelemetryUI.cs` |
 | 4 | AI World Designer | `Scripts/WorldGeneration/Models/*`, `Scripts/WorldGeneration/Adapters/*` |
 | 5 | AI Integration Engineer | `Scripts/AI/*` |
-| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (data contracts only as of Phase 5 — `ValidationResult`/`ValidationError`; validation logic itself is not yet implemented) |
+| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (real logic since Phase 6 — `WorldSpecificationValidator`, `WorldGenerationLimits`) |
 | 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs` |
 | 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` |
 | 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*`, `PrefabRegistry` |

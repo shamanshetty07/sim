@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Sim.WorldGeneration.Models;
@@ -6,46 +7,83 @@ using Sim.WorldGeneration.Models;
 namespace Sim.AI
 {
     /// <summary>
-    /// Minimal IWorldGenerationService implementation for exercising the pipeline before real
-    /// OpenWorld Reactor access exists. Intentionally does NOT parse or interpret the prompt —
-    /// it returns one fixed example result regardless of what was asked for. Building a mock
-    /// that actually varies its output usefully (multiple example worlds, simple keyword
-    /// selection for dev convenience) is Phase 6 work; this exists in Phase 5 only to prove
-    /// IWorldGenerationService -> WorldGenerationOutcome -> ReactorWorldResult is a real,
-    /// usable, compiling contract end to end, and to give ReactorWorldAdapter something to
-    /// run against.
+    /// Development/testing stand-in for a real IWorldGenerationService. Exists so the rest of
+    /// the application (adapter, validator, controller, future UI) can be built and tested
+    /// without OpenWorld Reactor access, and so this project's async/cancellation/error-
+    /// handling plumbing can be exercised deterministically in EditMode tests.
     ///
-    /// This is a deliberate choice, not a shortcut: a mock that pretended to interpret the
-    /// prompt (e.g. keyword-matching "mountain" to a hardcoded biome) is exactly the
-    /// "hardcoded biome parser pretending to be AI" architecture this phase was explicitly
-    /// told to move away from. Keeping the mock honestly non-interpretive means nothing about
-    /// its behaviour can be mistaken for how the real backend will behave.
+    /// IMPORTANT — this is explicitly NOT a fake AI: it does not parse or interpret the
+    /// prompt to decide what to generate. A mock that pattern-matched "mountain" -> forest
+    /// biome would be exactly the "hardcoded biome parser pretending to be AI" architecture
+    /// this project was explicitly told to avoid. It always returns the same fixed example
+    /// world; the prompt is only echoed into the description field so tests can confirm it
+    /// survived the pipeline intact.
+    ///
+    /// What it does simulate, for real dev/testing value:
+    ///  - Determinism: the same seed (explicit, or derived stably from the prompt when no
+    ///    seed is given) always produces the same result — real world-generation backends are
+    ///    expected to behave this way (see ReactorWorldResult.IsDeterministic), and having the
+    ///    mock actually do it lets regeneration/seed-reproducibility logic be tested now.
+    ///  - Simulated latency: SimulatedDelayMilliseconds (0 by default, so tests stay fast) can
+    ///    be set to exercise async/cancellation code paths realistically.
+    ///  - Cancellation: honors the CancellationToken during the simulated delay.
     /// </summary>
     public sealed class MockWorldGenerationService : IWorldGenerationService
     {
-        public Task<WorldGenerationOutcome> GenerateWorldAsync(WorldGenerationRequest request, CancellationToken cancellationToken = default)
+        /// <summary>0 by default (instant) — set higher only for manual/dev testing of loading states.</summary>
+        public int SimulatedDelayMilliseconds { get; set; } = 0;
+
+        public async Task<WorldGenerationOutcome> GenerateWorldAsync(WorldGenerationRequest request, CancellationToken cancellationToken = default)
         {
             if (request == null)
-                return Task.FromResult(WorldGenerationOutcome.Failed(WorldGenerationFailureReason.InvalidResponse, "Request was null."));
+                return WorldGenerationOutcome.Failed(WorldGenerationFailureReason.InvalidResponse, "Request was null.");
+
+            if (SimulatedDelayMilliseconds > 0)
+                await Task.Delay(SimulatedDelayMilliseconds, cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int seed = request.Seed ?? StableHash(request.Prompt);
 
             var result = new ReactorWorldResult
             {
                 WorldName = "Mock Example World",
                 Description = $"Placeholder result — does not reflect the prompt. Prompt received: \"{request.Prompt}\"",
-                Seed = request.Seed ?? new System.Random().Next(),
+                Seed = seed,
                 PayloadKind = ReactorWorldPayloadKind.Unknown,
-                IsDeterministic = false, // honest: this mock's Seed fallback above is NOT deterministic when request.Seed is null
+                IsDeterministic = true, // true here specifically because seed resolution above is itself stable/reproducible
                 Metadata = new WorldGenerationMetadata
                 {
                     ProviderName = "Mock",
-                    ProviderVersion = "phase5-placeholder",
+                    ProviderVersion = "phase6-placeholder",
                     RequestId = request.RequestId,
                     GeneratedAtUtc = DateTime.UtcNow,
-                    GenerationDuration = TimeSpan.Zero
+                    GenerationDuration = TimeSpan.FromMilliseconds(SimulatedDelayMilliseconds)
                 }
             };
 
-            return Task.FromResult(WorldGenerationOutcome.Succeeded(result));
+            return WorldGenerationOutcome.Succeeded(result);
+        }
+
+        /// <summary>
+        /// FNV-1a over the UTF-8 prompt bytes — deterministic across processes/platforms/.NET
+        /// versions, unlike string.GetHashCode() (which Microsoft explicitly does not
+        /// guarantee to be stable across runs). Used only to give "no seed supplied" requests
+        /// a reproducible seed for this mock; not a claim about how a real backend derives one.
+        /// </summary>
+        private static int StableHash(string text)
+        {
+            const uint fnvOffsetBasis = 2166136261;
+            const uint fnvPrime = 16777619;
+
+            uint hash = fnvOffsetBasis;
+            foreach (byte b in Encoding.UTF8.GetBytes(text ?? string.Empty))
+            {
+                hash ^= b;
+                hash *= fnvPrime;
+            }
+
+            return unchecked((int)hash);
         }
     }
 }

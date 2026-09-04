@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Sim.AI;
@@ -56,6 +57,64 @@ namespace Sim.Tests.EditMode
             WorldGenerationOutcome outcome = await _service.GenerateWorldAsync(request);
 
             Assert.AreEqual("Mock", outcome.Result.Metadata.ProviderName);
+        }
+
+        [Test]
+        public async Task GenerateWorldAsync_SameExplicitSeed_ProducesSameResultSeed_TwiceInARow()
+        {
+            var requestA = new WorldGenerationRequest("Create a mountain course.", seed: 555);
+            var requestB = new WorldGenerationRequest("Create a mountain course.", seed: 555);
+
+            WorldGenerationOutcome a = await _service.GenerateWorldAsync(requestA);
+            WorldGenerationOutcome b = await _service.GenerateWorldAsync(requestB);
+
+            Assert.AreEqual(a.Result.Seed, b.Result.Seed);
+        }
+
+        [Test]
+        public async Task GenerateWorldAsync_NoSeedGiven_SamePromptProducesSameSeed()
+        {
+            var requestA = new WorldGenerationRequest("Create a desert canyon FPV racing course.");
+            var requestB = new WorldGenerationRequest("Create a desert canyon FPV racing course.");
+
+            WorldGenerationOutcome a = await _service.GenerateWorldAsync(requestA);
+            WorldGenerationOutcome b = await _service.GenerateWorldAsync(requestB);
+
+            Assert.AreEqual(a.Result.Seed, b.Result.Seed, "Same prompt with no explicit seed should deterministically derive the same seed.");
+        }
+
+        [Test]
+        public async Task GenerateWorldAsync_NoSeedGiven_DifferentPromptProducesDifferentSeed()
+        {
+            var requestA = new WorldGenerationRequest("Create a desert canyon course.");
+            var requestB = new WorldGenerationRequest("Create a mountain forest course.");
+
+            WorldGenerationOutcome a = await _service.GenerateWorldAsync(requestA);
+            WorldGenerationOutcome b = await _service.GenerateWorldAsync(requestB);
+
+            Assert.AreNotEqual(a.Result.Seed, b.Result.Seed);
+        }
+
+        [Test]
+        public void GenerateWorldAsync_Cancellation_ThrowsOperationCanceledException()
+        {
+            _service.SimulatedDelayMilliseconds = 5000; // long enough that the cancel below always wins
+            var request = new WorldGenerationRequest("prompt");
+            var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            Assert.ThrowsAsync<TaskCanceledException>(async () => await _service.GenerateWorldAsync(request, cts.Token));
+        }
+
+        [Test]
+        public async Task GenerateWorldAsync_ZeroDelay_CompletesWithoutWaiting()
+        {
+            _service.SimulatedDelayMilliseconds = 0;
+            var request = new WorldGenerationRequest("prompt");
+
+            WorldGenerationOutcome outcome = await _service.GenerateWorldAsync(request);
+
+            Assert.IsTrue(outcome.Success);
         }
     }
 }
