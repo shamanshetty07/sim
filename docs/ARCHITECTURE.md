@@ -1,8 +1,19 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 8 — Unity-side WorldGenerator builds a playable world from a
-validated WorldSpecification.** `WorldGenerationController` (Sim.Core) was
-migrated to drive `IWorldDesigner` directly (see §6b) — see
+Status: **Phase 9 — the full prompt-to-playable-world pipeline is wired end
+to end at runtime.** `WorldGenerationController` (Sim.Core) now drives
+`IWorldDesigner` → `IWorldSpecificationValidator` → `WorldGenerator` in one
+place (extended, not replaced, from Phase 8's design→validate-only
+version — see §6c and `docs/PHASE_9_RUNTIME_PIPELINE.md`). A new thin
+composition layer, `Sim.Simulation` (`WorldGenerationRuntimeService`,
+`RuntimeSimulationBootstrap`, `IDroneSpawnTarget`), bridges that controller
+to the drone and to a runtime prompt UI (`Sim.UI.WorldGenerationUI`) — see
+`docs/PHASE_9_RUNTIME_PIPELINE.md` for the full Phase 9 architecture
+(state machine, mock vs. LLM mode, dependency injection, cancellation,
+threading, drone spawn integration, runtime scene setup). Previously
+(Phase 8 status below): **Unity-side WorldGenerator builds a playable world
+from a validated WorldSpecification.** `WorldGenerationController`
+(Sim.Core) was migrated to drive `IWorldDesigner` directly (see §6b) — see
 `docs/WORLD_GENERATION.md` for the full Phase 8 architecture (terrain,
 environment, obstacles/course, checkpoints, spawn safety, lighting,
 weather, determinism, regeneration). Previously (Phase 7 status below):
@@ -188,10 +199,20 @@ Assets/
                                  OpenAi/Anthropic/LocalLLMClient, WorldSpecificationJsonParser)
     Drone/                      Agent 2 — Rigidbody flight
     Camera/                     Agent 3 — FPV camera rig
-    UI/                         Agent 3 + 11 — HUD, OSD, prompt/generation UI
+    UI/                         Agent 3 + 11 — HUD, OSD; WorldGenerationUI +
+                                 WorldGenerationStatusFormatter (Phase 9 prompt UI — zero
+                                 world-generation logic, pure display of controller state)
+    Simulation/                 Phase 9 — runtime composition only: RuntimeSimulationBootstrap
+                                 (builds IWorldDesigner/validator/WorldGenerator/
+                                 WorldGenerationController, finds/wires the drone, wires the UI),
+                                 WorldGenerationRuntimeService (bridges the controller to
+                                 IDroneSpawnTarget once Ready), IDroneSpawnTarget +
+                                 DroneControllerSpawnTarget, WorldDesignerMode/LLMProviderKind
     WorldGeneration/
       Models/                   Agent 4 — WorldSpecification and its sub-models, including
-                                 CourseSpecification (Phase 7); ReactorWorldResult (Phase 5,
+                                 CourseSpecification (Phase 7); ExamplePrompts (Phase 9 — shared
+                                 default prompt for Editor tooling and runtime UI);
+                                 ReactorWorldResult (Phase 5,
                                  now only used by the isolated Assets/Scripts/AI/ Reactor path)
                                  — see docs/AI_WORLD_DESIGNER.md, docs/WORLD_SPECIFICATION.md
       Adapters/                  Agent 4/5 — ReactorWorldAdapter (Phase 5, isolated Reactor
@@ -204,7 +225,9 @@ Assets/
       (root)                      Agent 7 — WorldGenerator orchestrator
     Gameplay/                   RaceManager, CrashDetector
     Core/                       Agent 1 — WorldGenerationController + WorldGenerationState
-                                 (implemented Phase 6); GameEvents/ServiceLocator still pending
+                                 (implemented Phase 6; extended Phase 9 to drive generation and
+                                 clearing too, states now Idle/Designing/Validating/Generating/
+                                 Ready/Failed/Cancelled); GameEvents/ServiceLocator still pending
     Utilities/                  DeterministicRandom, MathX, CurveUtility
   Prefabs/
   Materials/
@@ -227,6 +250,10 @@ docs/
   WORLD_GENERATION.md           Phase 8: WorldGenerator architecture — terrain, environment,
                                  obstacles/course, checkpoints, spawn safety, lighting, weather,
                                  collision, determinism, regeneration, performance, limitations
+  PHASE_9_RUNTIME_PIPELINE.md   Phase 9: the runtime prompt-to-playable-world pipeline — UI,
+                                 WorldGenerationRuntimeService, RuntimeSimulationBootstrap,
+                                 mock vs. LLM mode, cancellation, threading, drone spawn
+                                 integration, runtime scene setup, manual test checklist
   AI_INTEGRATION.md             superseded by OPENWORLD_REACTOR_INTEGRATION.md / AI_WORLD_DESIGNER.md
   DRONE_PHYSICS.md              flight model, credits to reference repo
   FPV_CAMERA_AND_OSD.md         camera/HUD architecture (Phase 4)
@@ -421,6 +448,33 @@ controller does not yet call — an Editor tool
 `WorldGenerator` manually for now; wiring a runtime UI to do the same is
 Phase 9 work.
 
+## 6d. Phase 9: the runtime prompt pipeline
+
+`WorldGenerationController` now calls `WorldGenerator.Generate()` itself
+after validation succeeds — the "later stage this controller does not yet
+call" from §6c is now called, closing the loop from §6c's own forward
+reference. This was an in-place extension (new constructor parameter, one
+more state, one more method) of the same class, not a second controller.
+
+A new, deliberately thin layer, `Sim.Simulation`, is the only code in the
+runtime that is allowed to know about both `WorldGenerationController`
+(Sim.Core, still with no reference to `Sim.Drone`) and the drone:
+`WorldGenerationRuntimeService` places the drone once the controller
+reaches `Ready` (via `IDroneSpawnTarget`, not a direct `DroneController`
+reference, so it stays unit-testable without a Play-mode-only Rigidbody
+setup), and `RuntimeSimulationBootstrap` is the composition root that
+builds the whole chain — `IWorldDesigner` (Mock, or an honest-failure LLM
+stub — see §6b, no real provider exists yet), validator, `WorldGenerator`,
+controller, service — and wires it to a runtime prompt UI
+(`Sim.UI.WorldGenerationUI`, which contains no world-generation logic of
+its own; every button press is a pass-through to the service, every status
+display a pure function of the controller's own state).
+
+Full reasoning (state machine, cancellation-before-generation semantics,
+why Unity's `SynchronizationContext` makes the post-`await` synchronous
+tail main-thread-safe, mock vs. LLM mode, how the runtime scene is built,
+and everything not yet done) is in `docs/PHASE_9_RUNTIME_PIPELINE.md`.
+
 ## 7. Error handling strategy
 
 | Failure point | Behaviour |
@@ -435,12 +489,14 @@ Phase 9 work.
 | Save/load reads a spec from a newer/older schema version | `WorldSaveData.GenerationVersion` is checked; a mismatch is reported, not silently misapplied. |
 
 `WorldGenerationController` (`Assets/Scripts/Core/WorldGenerationController.cs`,
-implemented Phase 6, migrated Phase 8 to drive `IWorldDesigner` — see §6c)
-is the single state machine (`Idle → Requesting →
-Validating → Completed/Failed/Cancelled` — `WorldGenerationState`) that all
-of the above funnels through, so a future UI only ever needs to react to
+implemented Phase 6, migrated Phase 8 to drive `IWorldDesigner` — see §6c,
+extended Phase 9 to also drive `WorldGenerator` — see §6d)
+is the single state machine (`Idle → Designing →
+Validating → Generating → Ready/Failed/Cancelled` — `WorldGenerationState`,
+renamed/extended from Phase 8's `Requesting`/`Completed` this phase) that
+all of the above funnels through, so a UI only ever needs to react to
 one state enum plus `LastErrorMessage`/`LastFailureReason` — it never talks
-to `IWorldDesigner` or the validator directly. It
+to `IWorldDesigner`, the validator, or `WorldGenerator` directly. It
 also guards against a stale, already-superseded generation attempt (the
 user clicking Generate again before a previous attempt finished)
 overwriting a newer attempt's result — see its class remarks.

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Sim.AI.WorldDesign;
+using Sim.WorldGeneration;
 using Sim.WorldGeneration.Models;
 using Sim.WorldGeneration.Validation;
 using Debug = UnityEngine.Debug;
@@ -10,53 +11,69 @@ using Debug = UnityEngine.Debug;
 namespace Sim.Core
 {
     /// <summary>
-    /// The single entry point a future UI needs: GenerateWorldAsync(prompt) / Cancel(). Owns
-    /// the Idle -&gt; Requesting -&gt; Validating -&gt; Completed/Failed/Cancelled state machine
-    /// and drives IWorldDesigner -&gt; IWorldSpecificationValidator in order. The UI never talks
-    /// to either directly, and never needs to know which IWorldDesigner (Mock or a real LLM
-    /// provider) is active — it only observes <see cref="State"/> (via
-    /// <see cref="StateChanged"/>) and reads <see cref="LastValidSpecification"/> /
+    /// The single authoritative entry point for the whole prompt-to-playable-world pipeline:
+    /// GenerateWorldAsync(prompt) / Cancel() / ClearGeneratedWorld(). Owns the
+    /// Idle -&gt; Designing -&gt; Validating -&gt; Generating -&gt; Ready/Failed/Cancelled state
+    /// machine and drives IWorldDesigner -&gt; IWorldSpecificationValidator -&gt; WorldGenerator in
+    /// order. Callers never talk to any of the three directly, and never need to know which
+    /// IWorldDesigner (Mock or a real LLM provider) is active — they only observe
+    /// <see cref="State"/> (via <see cref="StateChanged"/>) and read
+    /// <see cref="LastGeneratedWorld"/> / <see cref="LastValidSpecification"/> /
     /// <see cref="LastErrorMessage"/> once a terminal state is reached.
     ///
-    /// Migrated Phase 8 from the Phase 6 version, which drove the Reactor-shaped
-    /// IWorldGenerationService/IReactorWorldAdapter pipeline. Per the Phase 7 architecture
-    /// pivot (OpenWorld Reactor is no longer authoritative — see docs/AI_WORLD_DESIGNER.md)
-    /// and this phase's explicit "reuse WorldGenerationController and its state machine, don't
-    /// create a competing one" instruction, this class was repurposed rather than duplicated:
-    /// the WorldGenerationState enum, the overall Idle/Requesting/Validating/terminal-state
-    /// shape, the stale-call guard, cancellation handling, and the [WorldGeneration] logging
-    /// convention are all unchanged — only the "how do we get a WorldSpecification" internals
-    /// changed, since IWorldDesigner returns one directly (no separate adapter stage the way
-    /// the Reactor pipeline needed). Nothing in production code depended on the old
-    /// constructor shape (verified before migrating); only its own test needed updating.
+    /// Extended Phase 9 from the Phase 8 version, which stopped at validation. Per this
+    /// phase's explicit "extend/refactor it, don't create a second competing controller"
+    /// instruction, this is the same class, given one more constructor dependency
+    /// (WorldGenerator) and one more pipeline stage — not a new orchestrator. This remains the
+    /// *only* place that owns pipeline state; a thin runtime layer
+    /// (Sim.Simulation.WorldGenerationRuntimeService) composes this with the drone, but does not
+    /// duplicate or shadow its state machine — it forwards this controller's own State/
+    /// StateChanged/LastErrorMessage directly (see that class's remarks).
     ///
-    /// Plain C# class, not a MonoBehaviour — Unity lifecycle (a Canvas/HUD script) owns an
-    /// instance of this and forwards Generate/Cancel button clicks into it.
+    /// Deliberately still has no reference to Sim.Drone — WorldGenerator doesn't either (see
+    /// its own remarks), and keeping that boundary here too is what lets this class be used
+    /// standalone (as Editor tooling already does) without needing a drone in the scene at all.
+    ///
+    /// Threading: GenerateWorldAsync is async because IWorldDesigner may genuinely need to
+    /// await network I/O (a real LLM call). WorldGenerator.Generate() itself is synchronous,
+    /// main-thread-only Unity object construction — safe to call directly here because Unity's
+    /// SynchronizationContext marshals every `await` continuation in this method back onto the
+    /// main thread automatically (this code never uses Task.Run or ConfigureAwait(false), which
+    /// are the two ways that guarantee would be broken). See docs/PHASE_9_RUNTIME_PIPELINE.md
+    /// "Threading" for the full reasoning.
+    ///
+    /// Plain C# class, not a MonoBehaviour — Unity lifecycle (a bootstrap/UI script) owns an
+    /// instance of this and forwards Generate/Cancel/Clear calls into it.
     /// </summary>
     public sealed class WorldGenerationController
     {
         private readonly IWorldDesigner _designer;
         private readonly IWorldSpecificationValidator _validator;
+        private readonly WorldGenerator _worldGenerator;
 
         private CancellationTokenSource _cts;
 
         public WorldGenerationState State { get; private set; } = WorldGenerationState.Idle;
         public WorldSpecification LastValidSpecification { get; private set; }
+        public GeneratedWorldResult LastGeneratedWorld { get; private set; }
         public string LastErrorMessage { get; private set; }
         public WorldDesignFailureReason LastFailureReason { get; private set; } = WorldDesignFailureReason.None;
 
         public event Action<WorldGenerationState> StateChanged;
 
-        public WorldGenerationController(IWorldDesigner designer, IWorldSpecificationValidator validator)
+        public WorldGenerationController(IWorldDesigner designer, IWorldSpecificationValidator validator, WorldGenerator worldGenerator)
         {
             _designer = designer ?? throw new ArgumentNullException(nameof(designer));
             _validator = validator ?? throw new ArgumentNullException(nameof(validator));
+            _worldGenerator = worldGenerator ?? throw new ArgumentNullException(nameof(worldGenerator));
         }
 
         /// <summary>
-        /// Runs one full design+validation attempt. Cancels any attempt already in flight
-        /// first, so calling this again is exactly "Retry"/"Generate a new one" — the caller
-        /// never needs to call Cancel() first itself.
+        /// Runs one full design -&gt; validate -&gt; generate attempt. Cancels any attempt already
+        /// in flight first, so calling this again is exactly "Retry"/"Generate a new one" — the
+        /// caller never needs to call Cancel() first itself. The prompt is passed to
+        /// IWorldDesigner completely unmodified — nothing in this method inspects, parses, or
+        /// keyword-matches it.
         /// </summary>
         public async Task GenerateWorldAsync(string prompt, int? seed = null, WorldDesignConstraints constraints = null)
         {
@@ -83,7 +100,7 @@ namespace Sim.Core
             }
 
             Debug.Log("[WorldGeneration] Prompt received.");
-            SetState(WorldGenerationState.Requesting);
+            SetState(WorldGenerationState.Designing);
 
             var stopwatch = Stopwatch.StartNew();
             WorldDesignOutcome outcome;
@@ -148,9 +165,57 @@ namespace Sim.Core
             }
 
             Debug.Log("[WorldGeneration] Validation passed.");
+
+            // Cancellation cannot safely interrupt WorldGenerator.Generate() itself — it runs
+            // synchronously on the main thread and is not written to be interruptible partway
+            // (Unity object construction generally isn't safe to abandon mid-call). This is the
+            // one place a cancellation request that arrived during/just after validation is
+            // honored: check once, right before the point of no return, and never start
+            // generation at all if so — "cancel the design phase and prevent subsequent
+            // generation," exactly as this phase specifies, rather than attempting to tear down
+            // partially-constructed Unity objects from an interrupted call.
+            if (!IsCurrent(token) || token.IsCancellationRequested)
+            {
+                HandleCancelled(token);
+                return;
+            }
+
+            SetState(WorldGenerationState.Generating);
+
+            GeneratedWorldResult generated = _worldGenerator.Generate(validation.RepairedSpecification);
+
+            if (!generated.Success)
+            {
+                Debug.LogWarning($"[WorldGeneration] World generation failed: {generated.ErrorMessage}");
+                if (!IsCurrent(token)) return;
+                LastErrorMessage = generated.ErrorMessage;
+                LastFailureReason = WorldDesignFailureReason.Unknown;
+                SetState(WorldGenerationState.Failed);
+                return;
+            }
+
+            Debug.Log("[WorldGeneration] World generation completed.");
             if (!IsCurrent(token)) return;
             LastValidSpecification = validation.RepairedSpecification;
-            SetState(WorldGenerationState.Completed);
+            LastGeneratedWorld = generated;
+            SetState(WorldGenerationState.Ready);
+        }
+
+        /// <summary>
+        /// Destroys the currently-generated world (via WorldGenerator.Clear() — the same
+        /// single authoritative cleanup path used everywhere else) and returns to Idle.
+        /// Cancels any in-flight generation first. Safe to call when nothing has been
+        /// generated yet.
+        /// </summary>
+        public void ClearGeneratedWorld()
+        {
+            CancelInternal();
+            _worldGenerator.Clear();
+            LastValidSpecification = null;
+            LastGeneratedWorld = null;
+            LastErrorMessage = null;
+            LastFailureReason = WorldDesignFailureReason.None;
+            SetState(WorldGenerationState.Idle);
         }
 
         /// <summary>True if `token` belongs to the attempt this controller currently considers "the" in-flight/most-recent one — false for a stale call superseded by a later GenerateWorldAsync.</summary>

@@ -15,7 +15,7 @@ check it before assuming a phase needs to start from scratch.
 | 6.5 | Investigate whether any Reactor model can give Unity a usable 3D world | ✅ Done — checked all 8 hosted models. None export mesh/point-cloud/depth/GLTF/USD/FBX or structured scene state; video-only across the platform. See docs/REACTOR_TO_UNITY_ARCHITECTURE.md. Recommendation given (Option D diagnosis → Option C path); implementation not started, awaiting user direction. |
 | 7 | AI World Designer + WorldSpecification generation | ✅ Done — `IWorldDesigner`/`WorldDesignRequest`/`WorldDesignOutcome`, `MockWorldDesigner` (rich, deterministic, non-interpretive), `LLMWorldDesigner` + `ILLMClient` (OpenAI/Anthropic/Local — all honest stubs, none configured), `WorldSpecificationJsonParser` (Newtonsoft.Json, `TypeNameHandling.None`), new `CourseSpecification` model. Answers 6.5's "where does the intelligence come from" question. See docs/AI_WORLD_DESIGNER.md. |
 | 8 | Unity-side procedural world construction (`WorldGenerator`) | ✅ Done — `WorldGenerator` + `TerrainGenerator`/`EnvironmentGenerator`/`ObstacleGenerator`/`LightingGenerator`/`WeatherGenerator`/`SpawnResolver`/`WorldSeedManager`, `CheckpointManager`/`CheckpointTrigger`, Editor tooling, EditMode tests. See docs/WORLD_GENERATION.md. This phase substantially covers what rows 10-12 below originally described (terrain/environment/obstacles were all built together, not as separate later phases) — see the note under this table. |
-| 9 | Prompt UI + wiring `WorldGenerationController` → `WorldGenerator` at runtime | ⬜ Not started |
+| 9 | Prompt UI + wiring `WorldGenerationController` → `WorldGenerator` at runtime | ✅ Done — `WorldGenerationController` extended to drive generation+clearing; `Sim.Simulation` (`WorldGenerationRuntimeService`, `RuntimeSimulationBootstrap`, `IDroneSpawnTarget`); `WorldGenerationUI`/`WorldGenerationStatusFormatter`; Editor tooling builds the runtime scene. EditMode tests. See docs/PHASE_9_RUNTIME_PIPELINE.md. Unverified in a live Editor (none available here). |
 | 10 | Procedural terrain | ✅ Covered by Phase 8 (`TerrainGenerator`) — kept as a row for traceability against the original brief, not separate remaining work |
 | 11 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
 | 12 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
@@ -265,6 +265,91 @@ assumed) that C#'s enclosing-namespace lookup rules make
 without an explicit `using` — verified against the language spec rather
 than left as an assumption, since getting this wrong would have been a
 real compile error.
+
+## Phase 9 detail
+
+Wired the runtime pipeline end to end: prompt UI → `WorldGenerationController`
+→ `IWorldDesigner` → validator → `WorldGenerator` → drone spawn.
+
+**`WorldGenerationController` extended, not replaced** (`Assets/Scripts/Core/`):
+constructor now also takes `WorldGenerator`; `GenerateWorldAsync` now
+continues past validation into `WorldGenerator.Generate()`; new
+`ClearGeneratedWorld()`; new `LastGeneratedWorld` property.
+`WorldGenerationState` renamed/extended in place (`Requesting`→`Designing`,
+`Completed`→`Ready`, added `Generating`) — same enum, not a second one.
+Still has no reference to `Sim.Drone`, matching `WorldGenerator`'s own rule.
+
+**New `Assets/Scripts/Simulation/` (namespace `Sim.Simulation`)** — the only
+code allowed to know about both the controller and the drone:
+`IDroneSpawnTarget`/`DroneControllerSpawnTarget` (adapter over the existing
+`DroneController.SetSpawn`/`ResetToSpawn`, introduced so drone-placement
+logic is unit-testable without a Play-mode-only Rigidbody setup — `Awake()`
+doesn't run for a component added via script in Edit mode), `WorldDesignerMode`/
+`LLMProviderKind` enums, `WorldGenerationRuntimeService` (bridges the
+controller to the drone once state reaches `Ready`; also the class a UI
+actually calls), `RuntimeSimulationBootstrap` (`MonoBehaviour` composition
+root — builds the whole designer/validator/generator/controller/service
+chain, finds or is given the drone, wires the UI; does not construct the
+drone rig itself — that needs Editor-only APIs the runtime assembly can't
+reference, so it expects a scene built once via Editor tooling).
+
+**New `Assets/Scripts/UI/`**: `WorldGenerationUI` (prompt input + Generate/
+Cancel/Clear buttons + status text; zero world-generation logic — every
+handler is a pass-through to `WorldGenerationRuntimeService`, every display
+update a pure function via `WorldGenerationStatusFormatter`),
+`WorldGenerationStatusFormatter` (pure, independently tested).
+
+**New `Assets/Scripts/WorldGeneration/Models/ExamplePrompts.cs`** — the
+brief's exact Himalayan prompt, extracted to one shared constant used by
+both the Editor quick-test command and the runtime UI's default text
+(previously only lived inline in the Editor tool).
+
+**`WorldGenerationTestTool.cs` extended** (Editor-only, `Sim.Editor.asmdef`):
+existing "Generate Test World"/"Clear Generated World" commands refactored
+to go through the now-complete controller instead of composing
+Mock→validator→WorldGenerator by hand; new "Build Runtime Scene (Save To
+Disk)" command builds `Assets/Scenes/MainScene.unity` — drone/camera/OSD via
+the existing `DroneRigBuilder` (not duplicated), a hand-built TMP prompt UI,
+an `EventSystem` with `InputSystemUIInputModule` (not the legacy
+`StandaloneInputModule` — this project already requires the New Input
+System for drone controls), and a `Simulation Bootstrap` GameObject.
+`DroneRigBuilder.AssignField` changed from `private` to `internal` for
+reuse here.
+
+**Mock mode requires zero external configuration** — no internet, no API
+keys, no Reactor, works fully offline, and is the default. **LLM mode
+fails honestly** — every provider is still an unconfigured Phase 7 stub;
+selecting LLM mode reaches `Failed` with a clear "not configured" message,
+never a fake success.
+
+**No keyword parsing anywhere in this phase's code** — the prompt is read
+once from the input field and passed to `IWorldDesigner` unmodified;
+verified with `grep -rn "prompt.Contains"` returning nothing.
+
+**Threading**: `WorldGenerator.Generate()` is called directly after the
+design `await` completes — safe because Unity's `SynchronizationContext`
+marshals every continuation in this codebase back to the main thread
+automatically (verified nothing here uses `Task.Run`/`ConfigureAwait(false)`,
+the two things that would break that guarantee). Cancellation cannot safely
+interrupt `Generate()` itself (synchronous, uninterruptible Unity object
+construction), so the controller checks for a pending cancellation once,
+immediately before calling it — the one point cancellation can still take
+effect, per this phase's "cancel the design phase, don't attempt unsafe
+mid-call interruption" instruction.
+
+**Tests**: `WorldGenerationControllerTests.cs` (rewritten — real EditMode
+tests exercising the full pipeline including three fake `IWorldDesigner`
+implementations for designer/validation/generation failure paths, state-
+transition-order assertion, no-duplicate-`GeneratedWorld` assertion,
+cancellation/supersession), `WorldGenerationStatusFormatterTests.cs`,
+`WorldGenerationRuntimeServiceTests.cs` (fake `IDroneSpawnTarget`, since a
+real `DroneController` can't be reliably driven in EditMode — see above).
+
+**Not done this phase** (see docs/PHASE_9_RUNTIME_PIPELINE.md "Known
+limitations" for the complete list): no real LLM provider; no generated-
+world summary or checkpoint-progress UI; `RuntimeSimulationBootstrap`
+cannot build the drone rig itself (needs a scene built via Editor tooling
+first); nothing verified in a live Unity Editor (none available here).
 
 ## Phase 7 detail
 

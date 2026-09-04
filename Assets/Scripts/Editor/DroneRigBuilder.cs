@@ -413,7 +413,7 @@ namespace Sim.EditorTools
         /// since neither a plain (non-[SerializeField]) field nor a C# event subscription is
         /// ever serialized.
         /// </summary>
-        private static void AssignField(Object component, string fieldName, Object value)
+        internal static void AssignField(Object component, string fieldName, Object value)
         {
             var so = new SerializedObject(component);
             var prop = so.FindProperty(fieldName);

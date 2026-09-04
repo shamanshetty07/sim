@@ -3,6 +3,7 @@
     "rootNamespace": "",
     "references": [
         "Sim.Runtime",
+        "Unity.InputSystem",
         "Unity.TextMeshPro",
         "UnityEngine.UI"
     ],
