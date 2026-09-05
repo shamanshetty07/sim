@@ -7,7 +7,7 @@ WorldSpecification (validated)
         ↓
 WorldGenerator.Generate(specification)
         ↓
-GeneratedWorldResult (root GameObject, spawn, CheckpointManager)
+GeneratedWorldResult (root GameObject, spawn, CheckpointManager, Bounds)
         ↓
 Playable Unity world — the existing FPV drone (Phase 3-4) flies in it
 ```
@@ -278,7 +278,10 @@ is destroyed. `UnityLifecycleUtility.DestroySafely` picks
 this runs at Play time or Edit time (a raw `Destroy` call errors outside
 Play mode; `DestroyImmediate` is discouraged during normal Play-mode
 gameplay) — this generator code is written to work correctly from either
-context.
+context. The same applies to `WorldRuntimeBounds` (Phase 12) — a fresh
+instance per successful generation, built directly from that generation's
+own `TerrainGenerationResult`, never cached across regenerations; see
+docs/PHASE_12_RECOVERY.md for how the drone-recovery system consumes it.
 
 ## Performance
 

@@ -102,11 +102,12 @@ namespace Sim.WorldGeneration
                 spawnMarker.transform.rotation = spawnResult.Rotation;
 
                 var checkpointManager = new CheckpointManager(obstacleRoot);
+                var bounds = new WorldRuntimeBounds(terrainResult);
 
                 Debug.Log($"[WorldGenerator] Generated '{specification.WorldName}' — " +
                           $"{obstacleResult.Checkpoints.Count} checkpoints, spawn at {spawnResult.Position}.");
 
-                return GeneratedWorldResult.Succeeded(root, spawnResult.Position, spawnResult.Rotation, checkpointManager);
+                return GeneratedWorldResult.Succeeded(root, spawnResult.Position, spawnResult.Rotation, checkpointManager, bounds);
             }
             catch (Exception ex)
             {

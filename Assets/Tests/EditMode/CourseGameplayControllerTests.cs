@@ -438,6 +438,40 @@ namespace Sim.Tests.EditMode
         }
 
         // ------------------------------------------------------------------
+        // Phase 12 — SetCheckpointProcessingSuppressed passthrough, used by
+        // DroneRecoveryController.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void SetCheckpointProcessingSuppressed_True_BlocksCheckpointProgression()
+        {
+            var manager = BindCourse(2);
+
+            _controller.SetCheckpointProcessingSuppressed(true);
+            manager.ReportCheckpointPassed(0);
+
+            Assert.AreEqual(0, _controller.CurrentCheckpointIndex);
+        }
+
+        [Test]
+        public void SetCheckpointProcessingSuppressed_False_RestoresProgression()
+        {
+            var manager = BindCourse(2);
+
+            _controller.SetCheckpointProcessingSuppressed(true);
+            _controller.SetCheckpointProcessingSuppressed(false);
+            manager.ReportCheckpointPassed(0);
+
+            Assert.AreEqual(1, _controller.CurrentCheckpointIndex);
+        }
+
+        [Test]
+        public void SetCheckpointProcessingSuppressed_NothingBound_DoesNotThrow()
+        {
+            Assert.DoesNotThrow(() => _controller.SetCheckpointProcessingSuppressed(true));
+        }
+
+        // ------------------------------------------------------------------
         // 21/22. Order comes from CheckpointDefinition/CheckpointTrigger index,
         // never from GameObject name or hierarchy/sibling order.
         // ------------------------------------------------------------------

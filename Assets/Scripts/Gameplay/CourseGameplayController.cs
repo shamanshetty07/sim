@@ -187,6 +187,17 @@ namespace Sim.Gameplay
             CourseReset?.Invoke();
         }
 
+        /// <summary>
+        /// Phase 12: suppresses/re-enables checkpoint processing without touching progress —
+        /// the passthrough DroneRecoveryController uses so a mid-race respawn teleport can
+        /// never accidentally register as passing (or wrongly attempting) a checkpoint. A
+        /// narrow, read/write-nothing-else passthrough to CheckpointManager.SetSuppressed —
+        /// deliberately not a broader public API onto CheckpointManager itself, keeping
+        /// "who owns checkpoint ordering" unambiguous (still CheckpointManager alone). A no-op
+        /// when nothing is bound.
+        /// </summary>
+        public void SetCheckpointProcessingSuppressed(bool suppressed) => _checkpointManager?.SetSuppressed(suppressed);
+
         private void HandleCheckpointPassed(int index) => CheckpointPassed?.Invoke(index);
 
         private void HandleWrongCheckpointAttempted(int attemptedIndex, int requiredIndex) =>

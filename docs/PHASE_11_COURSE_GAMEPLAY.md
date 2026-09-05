@@ -202,8 +202,15 @@ added.** `FlightTelemetry` already exposes altitude and velocity, and a
 future phase could reasonably threshold on those, but doing so correctly
 (what counts as "fallen" vs. diving intentionally through a low gate;
 what counts as "out of bounds" for terrain that varies per generated
-world) is exactly the kind of scope this phase was told to avoid. The
-only respawn mechanism in this phase is the explicit user-triggered Reset
+world) is exactly the kind of scope this phase was told to avoid.
+
+**Update, Phase 12:** implemented — see docs/PHASE_12_RECOVERY.md. It
+does not use velocity/altitude thresholds either (same reasoning above
+still applies); it uses the generated world's own bounds instead, layered
+on top of this phase's `CourseGameplayController`/`CheckpointManager`
+without modifying either one's core contract.
+
+The only respawn mechanism in this phase is the explicit user-triggered Reset
 button (§9), which is always available while Racing/Countdown/Finished
 and works regardless of *why* the user wants to reset.
 
@@ -393,8 +400,8 @@ to check by hand in Unity 2022.3 LTS:
 
 ## 17. Known limitations
 
-- No automatic fall/out-of-bounds respawn — explicit user Reset only (see
-  §10 for the reasoning).
+- ~~No automatic fall/out-of-bounds respawn~~ — implemented Phase 12
+  (`DroneRecoveryController`); see docs/PHASE_12_RECOVERY.md.
 - A checkpoint trigger is always "live" once bound; the only guard
   against a pre-race stray trigger touch is the Countdown→Racing reset
   described in §4 — a stray touch *during Racing itself* (e.g. drifting
@@ -416,8 +423,7 @@ to check by hand in Unity 2022.3 LTS:
 - Multi-lap courses / best-lap tracking.
 - Configurable countdown duration, exposed in the WorldSpecification or a
   settings UI.
-- Automatic fall/out-of-bounds detection, once a real definition of
-  "fallen"/"out of bounds" exists per generated world (see §10).
+- ~~Automatic fall/out-of-bounds detection~~ — implemented Phase 12.
 - Persisted best times (explicitly out of scope this phase — no
   database/persistence was added).
 - Multiplayer/leaderboards (explicitly out of scope this phase).

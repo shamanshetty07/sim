@@ -32,6 +32,12 @@ namespace Sim.Tests.EditMode
             }
         }
 
+        private sealed class FakeDroneStateSource : IDroneStateSource
+        {
+            public Vector3 Position { get; set; }
+            public Quaternion Rotation { get; set; } = Quaternion.identity;
+        }
+
         private WorldGenerator _worldGenerator;
         private WorldGenerationController _controller;
         private FakeDroneSpawnTarget _spawnTarget;
@@ -170,6 +176,56 @@ namespace Sim.Tests.EditMode
         {
             using var serviceWithoutCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, null);
             Assert.DoesNotThrowAsync(async () => await serviceWithoutCourse.GenerateWorldAsync("Create a mountain course."));
+            Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
+        }
+
+        // --------------------------------------------------------------------------------
+        // Phase 12 — drone recovery binding, over the same real Mock -> WorldGenerator
+        // pipeline (real generated terrain/bounds, not a fake).
+        // --------------------------------------------------------------------------------
+
+        [Test]
+        public async Task GenerateWorldAsync_Success_BindsRecoveryToGeneratedBounds()
+        {
+            var recovery = new DroneRecoveryController(_spawnTarget, new FakeDroneStateSource(), null);
+            using var serviceWithRecovery = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, recovery);
+
+            await serviceWithRecovery.GenerateWorldAsync("Create a mountain course.");
+
+            Assert.IsTrue(recovery.IsBound);
+        }
+
+        [Test]
+        public async Task Regenerate_RebindsRecovery_NotDuplicated()
+        {
+            var recovery = new DroneRecoveryController(_spawnTarget, new FakeDroneStateSource(), null);
+            using var serviceWithRecovery = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, recovery);
+
+            await serviceWithRecovery.GenerateWorldAsync("Create a mountain course.");
+            Assert.IsTrue(recovery.IsBound);
+
+            await serviceWithRecovery.GenerateWorldAsync("Create a different mountain course.");
+
+            Assert.IsTrue(recovery.IsBound, "the same DroneRecoveryController instance must still be bound after regeneration, not left permanently unbound by the transient Designing/Validating/Generating unbind");
+        }
+
+        [Test]
+        public async Task ClearWorld_UnbindsRecovery()
+        {
+            var recovery = new DroneRecoveryController(_spawnTarget, new FakeDroneStateSource(), null);
+            using var serviceWithRecovery = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, recovery);
+
+            await serviceWithRecovery.GenerateWorldAsync("Create a mountain course.");
+            serviceWithRecovery.ClearWorld();
+
+            Assert.IsFalse(recovery.IsBound);
+        }
+
+        [Test]
+        public void NullDroneRecoveryController_ReachesReady_DoesNotThrow()
+        {
+            using var serviceWithoutRecovery = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null);
+            Assert.DoesNotThrowAsync(async () => await serviceWithoutRecovery.GenerateWorldAsync("Create a mountain course."));
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
     }

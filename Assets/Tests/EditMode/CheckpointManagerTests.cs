@@ -158,6 +158,51 @@ namespace Sim.Tests.EditMode
             Assert.AreEqual(1, finishedCount);
         }
 
+        // ------------------------------------------------------------------
+        // Phase 12 — SetSuppressed, used by DroneRecoveryController to guarantee a mid-race
+        // respawn teleport can never accidentally register as passing a checkpoint.
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void SetSuppressed_True_ReportCheckpointPassed_IsCompleteNoOp()
+        {
+            CheckpointManager manager = BuildManager(3);
+            bool passedRaised = false, wrongRaised = false;
+            manager.CheckpointPassed += _ => passedRaised = true;
+            manager.WrongCheckpointAttempted += (a, r) => wrongRaised = true;
+
+            manager.SetSuppressed(true);
+            manager.ReportCheckpointPassed(0); // correct index — would normally advance
+            manager.ReportCheckpointPassed(2); // wrong index — would normally raise WrongCheckpointAttempted
+
+            Assert.AreEqual(0, manager.CurrentCheckpointIndex);
+            Assert.AreEqual(0, manager.CompletedCheckpoints);
+            Assert.IsFalse(passedRaised);
+            Assert.IsFalse(wrongRaised);
+        }
+
+        [Test]
+        public void SetSuppressed_False_ResumesNormalProcessing()
+        {
+            CheckpointManager manager = BuildManager(3);
+            manager.SetSuppressed(true);
+            manager.SetSuppressed(false);
+
+            manager.ReportCheckpointPassed(0);
+
+            Assert.AreEqual(1, manager.CurrentCheckpointIndex);
+        }
+
+        [Test]
+        public void IsSuppressed_ReflectsSetSuppressed()
+        {
+            CheckpointManager manager = BuildManager(1);
+            Assert.IsFalse(manager.IsSuppressed);
+
+            manager.SetSuppressed(true);
+            Assert.IsTrue(manager.IsSuppressed);
+        }
+
         [Test]
         public void CheckpointOrder_DrivenByConfiguredIndex_NotSiblingIndexOrName()
         {

@@ -36,6 +36,18 @@ namespace Sim.Gameplay
         /// <summary>True once every checkpoint has been passed in order. TotalCheckpoints == 0 is never "finished" — there is nothing to finish.</summary>
         public bool IsFinished => TotalCheckpoints > 0 && CurrentCheckpointIndex >= TotalCheckpoints;
 
+        /// <summary>
+        /// Phase 12: while true, ReportCheckpointPassed is a complete no-op (no state change, no
+        /// events) — used by DroneRecoveryController to guarantee a mid-race respawn teleport
+        /// can never accidentally register as passing (or wrongly attempting) a checkpoint,
+        /// without touching progression at all. Distinct from Reset() (Phase 11), which zeroes
+        /// progress — this only pauses reporting; CurrentCheckpointIndex/CompletedCheckpoints
+        /// are completely untouched while suppressed.
+        /// </summary>
+        public bool IsSuppressed { get; private set; }
+
+        public void SetSuppressed(bool suppressed) => IsSuppressed = suppressed;
+
         /// <summary>Raised with the index that was just passed, in order.</summary>
         public event Action<int> CheckpointPassed;
 
@@ -62,6 +74,7 @@ namespace Sim.Gameplay
         /// <summary>Called by a CheckpointTrigger when the drone passes through it. Out-of-order or post-finish reports never advance progression.</summary>
         public void ReportCheckpointPassed(int index)
         {
+            if (IsSuppressed) return;
             if (IsFinished) return;
 
             if (index != CurrentCheckpointIndex)

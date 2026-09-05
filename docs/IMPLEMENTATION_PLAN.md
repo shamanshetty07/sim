@@ -24,6 +24,7 @@ check it before assuming a phase needs to start from scratch.
 | 15 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
 | 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 | 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
+| 18 | Crash/fall detection & automatic respawn | ✅ Done — `DroneRecoveryController` (Monitoring/RecoveryPending/Recovering/Cooldown, separate from `CourseState`/`WorldGenerationState`), position-vs-world-bounds detection only (no orientation/velocity thresholds — see docs/PHASE_12_RECOVERY.md for why), `WorldRuntimeBounds` (new, `Sim.WorldGeneration`, reuses `TerrainGenerationResult` — no duplicated terrain math), `IDroneStateSource` (new, alongside `IDroneSpawnTarget`, both implemented by the existing `DroneControllerSpawnTarget`). `CheckpointManager` gained `SetSuppressed`/`IsSuppressed`; `CourseGameplayController` gained one passthrough (`SetCheckpointProcessingSuppressed`) — both small, targeted additions, not new systems. EditMode tests. See docs/PHASE_12_RECOVERY.md. Unverified in a live Editor (none available here). |
 
 Numbering has diverged from the original 14-phase brief (the 6.5
 investigation and this phase's architecture pivot both required insertions
@@ -523,6 +524,116 @@ without duplication on regeneration, unbinds on Clear), `CourseStatusFormatterTe
 All EditMode, all real (no fabricated Play Mode results) — see
 docs/PHASE_11_COURSE_GAMEPLAY.md "Testing" for exactly what is/isn't
 covered and the full manual Unity checklist.
+
+## Phase 12 detail
+
+Automatic crash/fall recovery, layered on top of Phase 11's course
+gameplay without modifying its core contract. Inspected the full existing
+stack first (`DroneController`, `DronePhysics`, `DroneFlightModel`,
+`FlightTelemetry`, `FlightModeController`, `WorldGenerationController`,
+`WorldGenerationRuntimeService`, `CourseGameplayController`, `RaceTimer`,
+`IDroneSpawnTarget`/`DroneControllerSpawnTarget`, `SpawnResolver`,
+`WorldGenerator`, the generated-world hierarchy, `CourseHUD`/
+`CourseStatusFormatter`, `CheckpointManager`/`CheckpointTrigger`,
+`RuntimeSimulationBootstrap`) before writing anything — confirmed
+`TerrainGenerationResult` already exposed exactly the bounds query needed
+(`Origin`/`Width`/`Depth`, `IsWithinBounds`, `SampleHeight`) and
+`IDroneSpawnTarget`/`DroneController.SetSpawn`+`ResetToSpawn` already did
+exactly what "reset the drone" needs — both reused directly, nothing
+recomputed or duplicated.
+
+**Central constraint, explicit in the brief**: do not infer crashes from
+orientation/angular velocity/linear velocity — Acro/Horizon both permit
+aggressive rotation and inverted flight by design, and a `if (rotation >
+X)`/`if (velocity > X)`/`if (isUpsideDown)` check would misfire on
+entirely legitimate FPV flight. Detection here is position-vs-world-
+bounds only (horizontal footprint + margin, below-ground + margin,
+non-finite safety net) — see docs/PHASE_12_RECOVERY.md §2-6 for the full
+reasoning, including why no maximum-altitude check exists (neither
+`WorldSpecification` nor `CourseSpecification` define one, and the brief
+is explicit that one must not be invented).
+
+**New, `Assets/Scripts/WorldGeneration/`**: `WorldRuntimeBounds` — a
+narrow, read-only wrapper over `TerrainGenerationResult` (no terrain math
+duplicated; `IsWithinHorizontalBounds`/`SampleGroundHeight` delegate
+straight through). `WorldGenerator.Generate()` builds one alongside the
+`CheckpointManager` it already built; `GeneratedWorldResult` gained a
+`Bounds` property (its `Succeeded(...)` factory gained one new parameter
+— the only call site, in `WorldGenerator` itself, updated to match).
+
+**New, `Assets/Scripts/Gameplay/`**: `DroneRecoveryState`
+(Monitoring/RecoveryPending/Recovering/Cooldown — its own enum, never
+sharing a switch statement with `CourseState`/`WorldGenerationState`);
+`DroneRecoveryConfig` (plain `[Serializable]` class — `Enabled`,
+`RecoveryMargin`, `BelowWorldMargin`, `ConfirmationDurationSeconds`,
+`CooldownDurationSeconds` — sensible prototype defaults, no giant
+settings framework); `DroneRecoveryController` (plain C# class, same
+"not a MonoBehaviour, constructed once, re-bound every regeneration"
+pattern as `CourseGameplayController`/`WorldGenerationController` — the
+single authoritative owner of recovery state, guaranteeing no duplicate
+recovery managers accumulate).
+
+**New, `Assets/Scripts/Simulation/`**: `IDroneStateSource` — a small
+read-only interface (`Position`/`Rotation`) kept deliberately separate
+from the existing write-only `IDroneSpawnTarget` so every existing
+`IDroneSpawnTarget`-only fake across Phase 9/11's tests is unaffected;
+`DroneControllerSpawnTarget` now implements both (the same single
+adapter, not a second drone abstraction).
+
+**Small, targeted additions to existing classes (not new systems)**:
+`CheckpointManager` gained `IsSuppressed`/`SetSuppressed(bool)` — a
+complete no-op switch for `ReportCheckpointPassed`, distinct from
+`Reset()` (which zeroes progress; this only pauses reporting) — so a
+recovery's respawn teleport can never accidentally register as passing
+(or wrongly attempting) a checkpoint, since `SpawnResolver`'s own overlap
+check ignores trigger colliders and so cannot guarantee a spawn point is
+clear of one. `CourseGameplayController` gained one narrow passthrough,
+`SetCheckpointProcessingSuppressed`, the only thing
+`DroneRecoveryController` is allowed to change about course/checkpoint
+state — `CurrentCheckpointIndex` itself is never touched by a recovery.
+
+**Extended, not replaced**: `WorldGenerationRuntimeService` gained one
+more optional constructor dependency (`DroneRecoveryController`) —
+bound/unbound in exactly the same `HandleStateChanged` branch Phase 11
+already extended for the course (Ready → bind; every other state,
+including the transient Designing/Validating/Generating a regeneration
+passes through → unbind). `RuntimeSimulationBootstrap` constructs the one
+`DroneRecoveryController` instance (reusing the same
+`DroneControllerSpawnTarget` as both `IDroneSpawnTarget` and
+`IDroneStateSource`), wires it into that service, wires it into the
+optional `CourseHUD` for transient "RECOVERING..." feedback, and ticks it
+once per frame alongside `CourseGameplayController.Tick()` — the only
+frame-driven work either does; everything else (binding, checkpoint
+suppression, recovery triggering) is event-driven.
+
+**Untouched, per explicit instruction**: `DronePhysics`/`DroneFlightModel`/
+`FlightModeController` (no flight-model changes — `ResetToSpawn()`'s
+existing disarm-on-reset behavior is reused exactly as before, not new);
+`ObstacleGenerator`/checkpoint *ordering* (recovery only ever reads
+`CheckpointManager`'s existing state through the one suppression
+passthrough); Reactor — grepped for any reference before finishing; no
+networking, no database, no save/load, no AI pilot, no new flight modes.
+
+**Tests**: `DroneRecoveryControllerTests` (the full state machine —
+disabled/inside-bounds → no recovery, horizontal/below-world crossing →
+pending → confirmed → recovers, brief crossing+return → no false
+positive, NaN/Infinity → immediate recovery regardless of course state,
+spawn position/rotation restored, checkpoint index preserved, checkpoint
+processing suppressed through cooldown, `Finished` race not recovered,
+cooldown prevents an immediate second recovery, events fire exactly
+once, unbind/rebind, timer keeps advancing through a recovery) using a
+fake `IGameplayClock`/`IDroneSpawnTarget`/`IDroneStateSource` plus a
+**real** generated `UnityEngine.Terrain` (via the actual
+`TerrainGenerator`) wrapped in a real `WorldRuntimeBounds` — no reason to
+fake terrain sampling when Unity's own Terrain system runs in EditMode;
+`WorldRuntimeBoundsTests`; extended `CheckpointManagerTests`
+(`SetSuppressed`), `CourseGameplayControllerTests`
+(`SetCheckpointProcessingSuppressed`), and `WorldGenerationRuntimeServiceTests`
+(recovery binds on Ready over the real Mock → `WorldGenerator` pipeline,
+rebinds without duplication on regeneration, unbinds on Clear). All
+EditMode, all real (no fabricated Play Mode results) — see
+docs/PHASE_12_RECOVERY.md "Testing" for exactly what is/isn't covered and
+the full manual Unity checklist.
 
 ## Phase 7 detail
 

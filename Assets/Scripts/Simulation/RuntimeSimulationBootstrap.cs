@@ -43,11 +43,17 @@ namespace Sim.Simulation
         [Tooltip("Optional — Phase 11 course gameplay HUD. World generation and course gameplay both still work if this is left unassigned; only the race HUD display does not.")]
         [SerializeField] private CourseHUD _courseHud;
 
+        [Tooltip("Phase 12 automatic crash/fall recovery tuning. Sensible defaults — see DroneRecoveryConfig.")]
+        [SerializeField] private DroneRecoveryConfig _recoveryConfig = new DroneRecoveryConfig();
+
         /// <summary>Exposed for tests/editor tooling that want to drive the same pipeline this bootstrap wires up, without needing a second copy of this construction logic.</summary>
         public WorldGenerationRuntimeService Service { get; private set; }
 
         /// <summary>Exposed for tests/editor tooling — Phase 11's race state machine (Waiting/Countdown/Racing/Finished/Failed/Resetting), bound to whatever course the pipeline above last generated.</summary>
         public CourseGameplayController Course { get; private set; }
+
+        /// <summary>Exposed for tests/editor tooling — Phase 12's automatic crash/fall recovery, bound to whatever world the pipeline above last generated.</summary>
+        public DroneRecoveryController Recovery { get; private set; }
 
         private void Awake()
         {
@@ -77,7 +83,15 @@ namespace Sim.Simulation
             // drone-reset implementation.
             Course = new CourseGameplayController(spawnTarget);
 
-            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course);
+            // DroneControllerSpawnTarget implements both IDroneSpawnTarget (write) and
+            // IDroneStateSource (read) — the same single adapter, not a second drone
+            // abstraction. spawnTarget is null when no drone exists in the scene; Recovery.Tick()
+            // is then simply a no-op (no state source to read), matching how course/drone
+            // placement already degrade gracefully with no drone present.
+            var stateSource = spawnTarget as IDroneStateSource;
+            Recovery = new DroneRecoveryController(spawnTarget, stateSource, Course, _recoveryConfig);
+
+            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course, Recovery);
 
             if (_ui != null)
                 _ui.Initialize(Service);
@@ -85,14 +99,22 @@ namespace Sim.Simulation
                 Debug.LogWarning("[Bootstrap] No WorldGenerationUI assigned — nothing will drive the pipeline until one is wired.");
 
             if (_courseHud != null)
+            {
                 _courseHud.Initialize(Course);
+                _courseHud.BindRecovery(Recovery);
+            }
         }
 
-        // Course's only frame-driven concern is noticing when a running countdown has elapsed —
-        // see CourseGameplayController.Tick's own remarks on why this isn't event-driven.
-        // Everything else about it (binding, checkpoint progression, finish) is event-driven,
+        // Course's only frame-driven concern is noticing when a running countdown has elapsed;
+        // Recovery's is noticing an out-of-bounds/non-finite drone position — see each class's
+        // own Tick() remarks on why this isn't event-driven. Everything else about either of
+        // them (binding, checkpoint progression, finish, recovery triggering) is event-driven,
         // not polled.
-        private void Update() => Course?.Tick();
+        private void Update()
+        {
+            Course?.Tick();
+            Recovery?.Tick();
+        }
 
         private void OnDestroy() => Service?.Dispose();
 

@@ -17,6 +17,11 @@ namespace Sim.UI
     /// ElapsedSeconds/CountdownRemainingSeconds once per rendered frame in Update() — the same
     /// pattern FPVHUD uses for its FPS readout — because a live timer/countdown has to visibly
     /// tick between events, not just redraw when something else happens.
+    ///
+    /// Phase 12: optionally also binds to a DroneRecoveryController (<see cref="BindRecovery"/>)
+    /// purely for transient "RECOVERING..." feedback via the same message line checkpoint
+    /// feedback already uses — never a permanent indicator, and it never reads or writes
+    /// anything about recovery's actual detection/reset logic.
     /// </summary>
     public sealed class CourseHUD : MonoBehaviour
     {
@@ -28,6 +33,7 @@ namespace Sim.UI
         [SerializeField] private Button _resetButton;
 
         private CourseGameplayController _controller;
+        private DroneRecoveryController _recovery;
         private float _messageClearAtUnscaledTime;
 
         private void Awake()
@@ -36,7 +42,11 @@ namespace Sim.UI
             if (_resetButton != null) _resetButton.onClick.AddListener(OnResetClicked);
         }
 
-        private void OnDestroy() => Detach();
+        private void OnDestroy()
+        {
+            Detach();
+            DetachRecovery();
+        }
 
         /// <summary>
         /// (Re-)targets the HUD at a CourseGameplayController, safely detaching from any
@@ -66,6 +76,41 @@ namespace Sim.UI
             _controller.WrongCheckpointAttempted -= HandleWrongCheckpointAttempted;
             _controller = null;
         }
+
+        /// <summary>
+        /// Phase 12: (re-)targets the HUD's recovery feedback at a DroneRecoveryController, same
+        /// detach-first re-wiring pattern as Initialize. Entirely optional — a HUD with no
+        /// recovery bound simply never shows recovery feedback; course display/Start/Reset are
+        /// completely unaffected either way. Pass null to detach entirely.
+        /// </summary>
+        public void BindRecovery(DroneRecoveryController recovery)
+        {
+            DetachRecovery();
+
+            _recovery = recovery;
+            if (_recovery == null) return;
+
+            _recovery.RecoveryStarted += HandleRecoveryStarted;
+            _recovery.RecoveryFailed += HandleRecoveryFailed;
+        }
+
+        private void DetachRecovery()
+        {
+            if (_recovery == null) return;
+
+            _recovery.RecoveryStarted -= HandleRecoveryStarted;
+            _recovery.RecoveryFailed -= HandleRecoveryFailed;
+            _recovery = null;
+        }
+
+        // "RECOVERING..." is deliberately shown via the same transient message line as
+        // checkpoint/wrong-checkpoint feedback (auto-clears after a couple of seconds via the
+        // existing Update() timeout below) rather than a separate permanent indicator — the
+        // brief is explicit that recovery state must never be shown permanently, and course
+        // state (COURSE READY/RACING/etc., from _stateText) is untouched by recovery entirely.
+        private void HandleRecoveryStarted(string reason) => ShowMessage("RECOVERING...");
+
+        private void HandleRecoveryFailed(string reason) => ShowMessage("RECOVERY FAILED");
 
         private void OnStartClicked() => _controller?.StartRace();
 
