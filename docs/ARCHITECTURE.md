@@ -1,11 +1,24 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 10 — `AnthropicLLMClient` is a real, working LLM provider.**
-Selecting `LLM`/`Anthropic` mode in `RuntimeSimulationBootstrap` (Phase 9)
-now reaches a real Anthropic Messages API call (structured output via
-forced tool use — never free-text "please output JSON"), not an honest
-stub — see `docs/PHASE_10_REAL_LLM.md`. `OpenAiLLMClient`/`LocalLLMClient`
-remain stubs. Previously (Phase 9 status below): **the full
+Status: **Phase 14 — save/load is implemented.** `Sim.WorldGeneration.
+Persistence` (`WorldSaveData`/`WorldSaveJsonSerializer`/`WorldSaveValidator`/
+`WorldSaveService`) persists the prompt/seed/`WorldSpecification`/metadata
+that produced a generated world — never a Terrain object, GameObject, or
+any other Unity runtime object graph — and `WorldGenerationController.
+LoadWorld` replays generation through the exact same `WorldGenerator` a
+fresh prompt uses, never calling the LLM. See
+`docs/PHASE_14_SAVE_LOAD.md`. This is the authoritative up-to-date
+summary; see `docs/IMPLEMENTATION_PLAN.md` for the full phase-by-phase
+status table, including Phases 11-13 (course gameplay/checkpoints/
+timing/HUD, crash/fall recovery, course results) this header previously
+omitted entirely (it had drifted stale at "Phase 10" until this phase
+corrected it). Previously (Phase 10 status below): **`AnthropicLLMClient`
+is a real, working LLM provider.** Selecting `LLM`/`Anthropic` mode in
+`RuntimeSimulationBootstrap` (Phase 9) now reaches a real Anthropic
+Messages API call (structured output via forced tool use — never
+free-text "please output JSON"), not an honest stub — see
+`docs/PHASE_10_REAL_LLM.md`. `OpenAiLLMClient`/`LocalLLMClient` remain
+stubs. Previously (Phase 9 status below): **the full
 prompt-to-playable-world pipeline is wired end to end at runtime.** `WorldGenerationController` (Sim.Core) now drives
 `IWorldDesigner` → `IWorldSpecificationValidator` → `WorldGenerator` in one
 place (extended, not replaced, from Phase 8's design→validate-only
@@ -132,7 +145,13 @@ this leaves pending real OpenWorld Reactor access).
 └─────────────────────────────────────────────────────────┘
 
 Cross-cutting:
-  Assets/Scripts/WorldGeneration/Persistence  — WorldSaveData, save/load
+  Assets/Scripts/WorldGeneration/Persistence  — WorldSaveData/IWorldSaveSerializer/
+                                                  WorldSaveValidator/IWorldSaveService
+                                                  (implemented Phase 14 — see
+                                                  docs/PHASE_14_SAVE_LOAD.md). Persists the
+                                                  prompt/seed/WorldSpecification/metadata only —
+                                                  never a generated mesh, Terrain object,
+                                                  GameObject, or other Unity runtime object graph.
   Assets/Scripts/Core                          — WorldGenerationController (Reactor-pipeline
                                                   state machine, Phase 6) + still-pending
                                                   GameEvents/ServiceLocator
@@ -231,7 +250,9 @@ Assets/
       Terrain/                   Agent 8 — terrain algorithms
       Environment/                Agent 9 — prefab placement, PrefabRegistry
       Obstacles/                  Agent 10 — gates/rings/checkpoints
-      Persistence/                Agent 13 — WorldSaveData, save/load
+      Persistence/                Agent 13 — WorldSaveData/WorldSaveJsonSerializer/
+                                 WorldSaveValidator/WorldSaveService (implemented Phase 14 —
+                                 see docs/PHASE_14_SAVE_LOAD.md)
       (root)                      Agent 7 — WorldGenerator orchestrator
     Gameplay/                   RaceManager, CrashDetector
     Core/                       Agent 1 — WorldGenerationController + WorldGenerationState
@@ -547,7 +568,7 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*` (implemented Phase 8); `Scripts/Gameplay/*` — checkpoint generation glue (`CheckpointManager`, `CheckpointTrigger`, Phase 8) plus course flow/timing (`CourseGameplayController`, `RaceTimer`, `IGameplayClock`, `CourseState`, `CourseValidator`, Phase 11) plus crash/fall recovery (`DroneRecoveryController`, `DroneRecoveryConfig`, `DroneRecoveryState`, `Scripts/WorldGeneration/WorldRuntimeBounds.cs`, Phase 12 — see docs/PHASE_12_RECOVERY.md) plus race results (`CourseResult`, `CourseResultsController`, Phase 13 — see docs/PHASE_13_COURSE_RESULTS.md) |
 | 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout; `Scripts/UI/CourseHUD.cs`/`CourseStatusFormatter.cs` (race HUD, Phase 11); `Scripts/UI/CourseResultsUI.cs`/`CourseResultFormatter.cs` (results panel, Phase 13) |
 | 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5 |
-| 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` |
+| 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` (`WorldSaveData`, `WorldSaveJsonSerializer`, `WorldSaveValidator`, `WorldSaveService` — implemented Phase 14, see docs/PHASE_14_SAVE_LOAD.md) |
 | 14 | QA Engineer | `Assets/Tests/EditMode/*`, `Assets/Tests/PlayMode/*` |
 
 In practice these are implemented sequentially by one engineer following the

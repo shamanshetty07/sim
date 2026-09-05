@@ -20,7 +20,7 @@ check it before assuming a phase needs to start from scratch.
 | 11 | Procedural terrain | ✅ Covered by Phase 8 (`TerrainGenerator`) — kept as a row for traceability against the original brief, not separate remaining work |
 | 12 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
 | 13 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
-| 14 | Save/load | ⬜ Not started |
+| 14 | Save/load | ✅ Done — `Sim.WorldGeneration.Persistence` (`WorldSaveData`, `IWorldSaveSerializer`/`WorldSaveJsonSerializer`, `WorldSaveValidator`, `IWorldSaveService`/`WorldSaveService`). Persists prompt + seed + `WorldSpecification` + metadata only — never a Unity runtime object graph. `WorldGenerationController` gained `LoadWorld(specification)`, sharing the exact same Validating→Generating→Ready/Failed tail as `GenerateWorldAsync` (extracted into `ValidateAndGenerate`) — Designing/`IWorldDesigner` is structurally never reached on load. `WorldGenerationRuntimeService.SaveWorld()`/`LoadWorld()` are thin forwards; a successful load reaches Ready through the same existing StateChanged handler a fresh generation already uses, so drone spawn/course binding/recovery binding/results all just work. `WorldGenerationUI` gained Save/Load buttons — no persistence logic in the UI. EditMode tests. See docs/PHASE_14_SAVE_LOAD.md. Unverified in a live Editor (none available here). |
 | 15 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
 | 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 | 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
@@ -740,6 +740,102 @@ into the next result, over the real Mock → WorldGenerator pipeline; a
 null CourseResultsController doesn't break reaching Ready). All EditMode,
 all real (no fabricated Play Mode results) — see
 docs/PHASE_13_COURSE_RESULTS.md "Testing" for exactly what is/isn't
+covered and the full manual Unity checklist.
+
+## Phase 14 detail
+
+Save/load, added on top of Phase 1-13 without replacing any existing
+system. Inspected the full existing stack first (WorldSpecification,
+WorldGenerationController, WorldGenerationRuntimeService, WorldGenerator,
+GeneratedWorldResult, WorldSeedManager, CourseGameplayController,
+CheckpointManager, RaceTimer, DroneRecoveryController,
+CourseResultsController, RuntimeSimulationBootstrap, WorldGenerationUI,
+CourseHUD, CourseResultsUI, WorldSpecificationValidator, and every
+existing test) before writing anything — confirmed
+`Assets/Scripts/WorldGeneration/Persistence/` already existed as an empty
+directory the architecture doc had reserved since Phase 2 ("WorldSaveData,
+save/load"), and `WorldGenerationMetadata.SchemaVersion` already
+anticipated a future save-format version check — this phase filled in
+exactly that gap, not a redesign.
+
+**Central architectural rule, explicit in the brief**: save the WORLD
+DEFINITION, not Unity's runtime object graph. `WorldSpecification`+seed
+are authoritative; nothing GameObject/Component/Terrain/Transform/
+Rigidbody-shaped is ever persisted.
+
+**New, `Assets/Scripts/WorldGeneration/Persistence/`**: `WorldSaveData`
+(Prompt/Seed/Specification/Metadata by composition, not duplication —
+`FromSpecification` is the only construction path, so Prompt/Seed can
+never drift from Specification's own values); `WorldSaveJsonSerializer`
+(same `TypeNameHandling.None`/`MetadataPropertyHandling.Ignore`/
+`MissingMemberHandling.Ignore`/`MaxDepth` safety settings as
+`WorldSpecificationJsonParser` — a save file is untrusted input in
+exactly the same sense LLM output is); `WorldSaveValidator` (a narrow
+save-envelope validator — version/prompt/seed-consistency checks it alone
+owns, folding in a full `WorldSpecificationValidator` pass so a save can
+never bypass it); `WorldSaveService` (the real, file-backed
+`IWorldSaveService` — writes under `Application.persistentDataPath`,
+never Assets/ProjectSettings/the repository; a strict allow-list regex on
+the save slot name, not a blacklist of `".."`, is what actually prevents
+path traversal — a slot name can structurally never contain a path
+separator at all).
+
+**Extended, not replaced**: `WorldGenerationController` gained
+`LoadWorld(specification)` — the existing tail of `GenerateWorldAsync`
+(Validating → Generating → Ready/Failed) was extracted into a shared
+private `ValidateAndGenerate`, so `LoadWorld` reuses it exactly, skipping
+only the Designing/`IWorldDesigner` step; no code path from `LoadWorld`
+can ever reach the designer, which is what structurally guarantees
+loading never calls an LLM. `WorldGenerationRuntimeService` gained
+`SaveWorld()`/`LoadWorld()` — thin forwards onto `IWorldSaveService` and
+`WorldGenerationController.LoadWorld`; a successful load reaches Ready
+through the exact same `StateChanged` handler a fresh generation already
+uses, so drone spawn placement, course binding, recovery binding, and
+result-seed tracking all continue to work with zero additional code.
+`RuntimeSimulationBootstrap` constructs one `WorldSaveService`.
+`WorldGenerationUI` gained Save/Load buttons (two new optional serialized
+fields) — button handlers only call the service and display whatever
+message it returns; `WorldGenerationStatusFormatter` gained
+`IsSaveAvailable`/`IsLoadAvailable`. `WorldGenerationTestTool`'s runtime
+scene builder gained one more button row.
+
+**Untouched, per explicit instruction**: no new generation pipeline (no
+`SaveWorldGenerator`/`LoadWorldGenerator`/duplicate
+`WorldGenerationController`); `WorldGenerator`/`WorldSeedManager`
+themselves (a loaded specification+seed goes through the identical
+generator every fresh generation already uses — determinism is inherited,
+not reimplemented); no auto-load on startup; no auto-save on any
+gameplay event; no live race/checkpoint/timer/recovery-cooldown state is
+persisted — after a load, the course begins from a clean `Waiting` state
+via the existing bind lifecycle, exactly like a fresh generation; Reactor
+— grepped for any reference before finishing; no database, no cloud
+storage, no accounts.
+
+**Tests**: `WorldSaveDataTests` (Prompt/Seed/Metadata always mirror
+Specification); `WorldSaveJsonSerializerTests` (round trip; malformed/
+empty/null JSON fails cleanly; `$type` injection inert; script-shaped
+strings remain inert data; 200-deep nesting fails cleanly, no stack
+overflow); `WorldSaveValidatorTests` (unsupported version, missing
+prompt/specification, prompt/seed-mismatch, and a real
+`WorldSpecificationValidator` failure all rejected; the repaired — not
+raw — specification is what's returned); `WorldSaveServiceTests` (real
+file I/O against an isolated temp directory, never the machine's real
+persistent-data path; round trip; path traversal / absolute-path / slash-
+containing slot names all rejected; missing/corrupted save files fail
+cleanly; Delete/Exists); extended `WorldGenerationControllerTests`
+(`LoadWorld` never reaches `Designing` and never calls a spy
+`IWorldDesigner`; invalid specification → `Failed`/`ValidationFailed`;
+unresolvable spawn → `Failed`, no stale `GeneratedWorld`; same
+specification+seed loaded twice reproduces the same terrain height — no
+new seed is ever generated on load; calling it twice never duplicates the
+`GeneratedWorld` root); extended `WorldGenerationRuntimeServiceTests`
+(`SaveWorld`/`LoadWorld` forwarding, using a fake in-memory
+`IWorldSaveService` — no generated world yet → no save-service call; a
+save-service load failure never touches the controller's state at all; a
+successful load reaches `Ready` and places the drone at the loaded
+spawn). All EditMode, all real (no fabricated Play Mode results;
+no test touches a real network, the Anthropic API, Reactor, or an API
+key) — see docs/PHASE_14_SAVE_LOAD.md "Testing" for exactly what is/isn't
 covered and the full manual Unity checklist.
 
 ## Phase 7 detail

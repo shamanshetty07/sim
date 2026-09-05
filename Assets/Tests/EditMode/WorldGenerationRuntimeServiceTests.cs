@@ -5,6 +5,8 @@ using Sim.Core;
 using Sim.Gameplay;
 using Sim.Simulation;
 using Sim.WorldGeneration;
+using Sim.WorldGeneration.Models;
+using Sim.WorldGeneration.Persistence;
 using Sim.WorldGeneration.Validation;
 using UnityEngine;
 
@@ -261,6 +263,133 @@ namespace Sim.Tests.EditMode
             using var serviceWithoutResults = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null);
             Assert.DoesNotThrowAsync(async () => await serviceWithoutResults.GenerateWorldAsync("Create a mountain course."));
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
+        }
+
+        // --------------------------------------------------------------------------------
+        // Phase 14 — save/load forwarding. A fake IWorldSaveService (in-memory, no real file
+        // I/O) so these tests stay focused on "does the service forward correctly," not on
+        // WorldSaveService's own file-handling (covered separately by WorldSaveServiceTests).
+        // --------------------------------------------------------------------------------
+
+        private sealed class FakeWorldSaveService : IWorldSaveService
+        {
+            public WorldSaveData Saved { get; private set; }
+            public int SaveCount { get; private set; }
+            public WorldLoadResult NextLoadResult { get; set; } = WorldLoadResult.Failed("No save file exists.");
+
+            public WorldSaveOperationResult Save(WorldSaveData data, string slotName = null)
+            {
+                Saved = data;
+                SaveCount++;
+                return WorldSaveOperationResult.Succeeded();
+            }
+
+            public WorldLoadResult Load(string slotName = null) => NextLoadResult;
+
+            public bool Delete(string slotName = null) => true;
+
+            public bool Exists(string slotName = null) => Saved != null;
+        }
+
+        [Test]
+        public void SaveWorld_NoSaveServiceConfigured_ReturnsMessage_DoesNotThrow()
+        {
+            string message = null;
+            Assert.DoesNotThrow(() => message = _service.SaveWorld());
+            Assert.IsNotNull(message);
+        }
+
+        [Test]
+        public void SaveWorld_NoGeneratedWorldYet_ReturnsMessage_DoesNotCallSaveService()
+        {
+            var saveService = new FakeWorldSaveService();
+            using var serviceWithSave = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null, saveService);
+
+            string message = serviceWithSave.SaveWorld();
+
+            Assert.IsNotNull(message);
+            Assert.AreEqual(0, saveService.SaveCount);
+        }
+
+        [Test]
+        public async Task SaveWorld_AfterGeneration_ForwardsTheGeneratedSpecificationToTheSaveService()
+        {
+            var saveService = new FakeWorldSaveService();
+            using var serviceWithSave = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null, saveService);
+
+            await serviceWithSave.GenerateWorldAsync("Create a mountain course.");
+            string message = serviceWithSave.SaveWorld();
+
+            Assert.AreEqual(1, saveService.SaveCount);
+            Assert.AreSame(_controller.LastValidSpecification, saveService.Saved.Specification);
+            Assert.IsNotNull(message);
+        }
+
+        [Test]
+        public void LoadWorld_NoSaveServiceConfigured_ReturnsMessage_DoesNotThrow()
+        {
+            string message = null;
+            Assert.DoesNotThrow(() => message = _service.LoadWorld());
+            Assert.IsNotNull(message);
+        }
+
+        [Test]
+        public void LoadWorld_SaveServiceLoadFails_ReturnsErrorMessage_ControllerStateUntouched()
+        {
+            var saveService = new FakeWorldSaveService { NextLoadResult = WorldLoadResult.Failed("No save file exists.") };
+            using var serviceWithSave = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null, saveService);
+
+            string message = serviceWithSave.LoadWorld();
+
+            Assert.IsNotNull(message);
+            Assert.AreEqual(WorldGenerationState.Idle, _controller.State, "a failure before the controller is ever involved must not touch its state at all.");
+        }
+
+        [Test]
+        public void LoadWorld_SaveServiceLoadSucceeds_ForwardsToControllerLoadWorld_ReachesReady()
+        {
+            var validSpecification = new WorldSpecification
+            {
+                OriginalPrompt = "Create a small test course.",
+                Seed = 7,
+                Terrain = new TerrainSpecification { TerrainType = "hills", Width = 200f, Depth = 200f, MaxHeight = 40f },
+                Spawn = new SpawnSpecification { Position = new Vector3(0f, 25f, 0f) }
+            };
+            var saveService = new FakeWorldSaveService
+            {
+                NextLoadResult = WorldLoadResult.Succeeded(WorldSaveData.FromSpecification(validSpecification))
+            };
+            using var serviceWithSave = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null, saveService);
+
+            string message = serviceWithSave.LoadWorld();
+
+            Assert.IsNull(message, "success hands off to the controller — the existing StateChanged-driven status already reports the rest.");
+            Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
+        }
+
+        [Test]
+        public void LoadWorld_Success_PlacesDroneAtLoadedSpawn_ViaTheSameHandlerAsGenerate()
+        {
+            var validSpecification = new WorldSpecification
+            {
+                OriginalPrompt = "Create a small test course.",
+                Seed = 7,
+                Terrain = new TerrainSpecification { TerrainType = "hills", Width = 200f, Depth = 200f, MaxHeight = 40f },
+                Spawn = new SpawnSpecification { Position = new Vector3(0f, 25f, 0f) }
+            };
+            var saveService = new FakeWorldSaveService
+            {
+                NextLoadResult = WorldLoadResult.Succeeded(WorldSaveData.FromSpecification(validSpecification))
+            };
+            // A dedicated spawn target (not the shared _spawnTarget the base fixture's own
+            // _service is also subscribed to) so this counts placements from this one service only.
+            var dedicatedSpawnTarget = new FakeDroneSpawnTarget();
+            using var serviceWithSave = new WorldGenerationRuntimeService(_controller, dedicatedSpawnTarget, null, null, null, saveService);
+
+            serviceWithSave.LoadWorld();
+
+            Assert.AreEqual(1, dedicatedSpawnTarget.PlaceCount);
+            Assert.AreEqual(_controller.LastGeneratedWorld.SpawnPosition, dedicatedSpawnTarget.LastPosition);
         }
     }
 }

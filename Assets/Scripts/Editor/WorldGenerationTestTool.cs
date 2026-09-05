@@ -212,6 +212,7 @@ namespace Sim.EditorTools
             CreateLabel(panel.transform, "Title", "AI FPV World Generator", 22f, 32f);
             TMP_InputField promptField = CreatePromptInputField(panel.transform);
             (Button generateButton, Button cancelButton, Button clearButton) = CreateButtonRow(panel.transform);
+            (Button saveButton, Button loadButton) = CreateSaveLoadButtonRow(panel.transform);
             TextMeshProUGUI statusText = CreateLabel(panel.transform, "StatusText", "Enter a world description.", 16f, 60f);
 
             var ui = canvasGO.AddComponent<WorldGenerationUI>();
@@ -219,6 +220,8 @@ namespace Sim.EditorTools
             DroneRigBuilder.AssignField(ui, "_generateButton", generateButton);
             DroneRigBuilder.AssignField(ui, "_cancelButton", cancelButton);
             DroneRigBuilder.AssignField(ui, "_clearButton", clearButton);
+            DroneRigBuilder.AssignField(ui, "_saveButton", saveButton);
+            DroneRigBuilder.AssignField(ui, "_loadButton", loadButton);
             DroneRigBuilder.AssignField(ui, "_statusText", statusText);
 
             return ui;
@@ -454,6 +457,26 @@ namespace Sim.EditorTools
             Button clear = CreateButton(row.transform, "ClearButton", "Clear World");
 
             return (generate, cancel, clear);
+        }
+
+        /// <summary>Phase 14 — a second row, kept separate from Generate/Cancel/Clear so this UI's own layout stays a minimal addition rather than a redesign.</summary>
+        private static (Button save, Button load) CreateSaveLoadButtonRow(Transform parent)
+        {
+            var row = new GameObject("SaveLoadButtonRow", typeof(RectTransform));
+            row.transform.SetParent(parent, false);
+            row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 44f);
+
+            var layout = row.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 8f;
+            layout.childControlWidth = false;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = false;
+
+            Button save = CreateButton(row.transform, "SaveButton", "Save World");
+            Button load = CreateButton(row.transform, "LoadButton", "Load World");
+
+            return (save, load);
         }
 
         private static Button CreateButton(Transform parent, string name, string label)

@@ -24,6 +24,10 @@ namespace Sim.UI
         [SerializeField] private Button _clearButton;
         [SerializeField] private TextMeshProUGUI _statusText;
 
+        [Tooltip("Optional — Phase 14 save/load. Leave unassigned and the buttons simply aren't built/wired; world generation itself is completely unaffected either way.")]
+        [SerializeField] private Button _saveButton;
+        [SerializeField] private Button _loadButton;
+
         private WorldGenerationRuntimeService _service;
 
         private void Awake()
@@ -31,6 +35,8 @@ namespace Sim.UI
             if (_generateButton != null) _generateButton.onClick.AddListener(OnGenerateClicked);
             if (_cancelButton != null) _cancelButton.onClick.AddListener(OnCancelClicked);
             if (_clearButton != null) _clearButton.onClick.AddListener(OnClearClicked);
+            if (_saveButton != null) _saveButton.onClick.AddListener(OnSaveClicked);
+            if (_loadButton != null) _loadButton.onClick.AddListener(OnLoadClicked);
 
             if (_promptInput != null && string.IsNullOrEmpty(_promptInput.text))
                 _promptInput.text = ExamplePrompts.Himalayan;
@@ -87,6 +93,37 @@ namespace Sim.UI
 
         private void OnClearClicked() => _service?.ClearWorld();
 
+        /// <summary>
+        /// Phase 14: forwards to WorldGenerationRuntimeService.SaveWorld() and shows whatever
+        /// message it returns — no persistence logic lives here. Saving does not change
+        /// WorldGenerationState, so (unlike Load) this message would otherwise never appear on
+        /// its own; it's written directly and simply stays until the next state change updates
+        /// this same label.
+        /// </summary>
+        private void OnSaveClicked()
+        {
+            if (_service == null) return;
+            if (_statusText != null) _statusText.text = _service.SaveWorld();
+        }
+
+        /// <summary>
+        /// Phase 14: forwards to WorldGenerationRuntimeService.LoadWorld(). A null return means
+        /// the load was handed off to WorldGenerationController successfully — the existing
+        /// StateChanged-driven status text already reports what happens next (Ready or Failed),
+        /// exactly as it does for a fresh generation, so nothing more is written here in that
+        /// case. A non-null return is a failure that happened before the controller was ever
+        /// involved (no save file, corrupted/invalid save data) — shown directly, since no state
+        /// change will ever arrive to report it otherwise.
+        /// </summary>
+        private void OnLoadClicked()
+        {
+            if (_service == null) return;
+
+            string message = _service.LoadWorld();
+            if (message != null && _statusText != null)
+                _statusText.text = message;
+        }
+
         private void HandleStateChanged(WorldGenerationState state) => UpdateDisplay(state, _service?.Controller.LastErrorMessage);
 
         private void UpdateDisplay(WorldGenerationState state, string lastErrorMessage)
@@ -97,6 +134,8 @@ namespace Sim.UI
             if (_generateButton != null) _generateButton.interactable = WorldGenerationStatusFormatter.IsGenerateAvailable(state);
             if (_cancelButton != null) _cancelButton.interactable = WorldGenerationStatusFormatter.IsCancelAvailable(state);
             if (_clearButton != null) _clearButton.interactable = WorldGenerationStatusFormatter.IsClearAvailable(state);
+            if (_saveButton != null) _saveButton.interactable = WorldGenerationStatusFormatter.IsSaveAvailable(state);
+            if (_loadButton != null) _loadButton.interactable = WorldGenerationStatusFormatter.IsLoadAvailable(state);
         }
     }
 }

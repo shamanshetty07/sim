@@ -225,6 +225,12 @@ persistence infrastructure of any kind. `WorldSeed` is carried on the
 model specifically so a *future* persistence phase has something to key
 off of, without this phase implementing any persistence itself.
 
+**Update, Phase 14:** save/load was implemented — but for the generated
+*world* (prompt/seed/`WorldSpecification`, via `Sim.WorldGeneration.
+Persistence`), not for `CourseResult`. This section's claim still holds
+exactly as written: no race result is persisted by anything in this
+project — see docs/PHASE_14_SAVE_LOAD.md for what is.
+
 ## 11. Events
 
 `CourseResultsController.ResultsReady(CourseResult result)` — one plain

@@ -216,6 +216,115 @@ namespace Sim.Tests.EditMode
             Assert.AreEqual("Second prompt.", _controller.LastValidSpecification.OriginalPrompt);
         }
 
+        // --------------------------------------------------------------------------------
+        // Phase 14 — LoadWorld: the same Validating -> Generating -> Ready/Failed tail as
+        // GenerateWorldAsync, given an already-known specification, skipping Designing entirely.
+        // --------------------------------------------------------------------------------
+
+        private static WorldSpecification ValidSpecification(int seed = 42) => new WorldSpecification
+        {
+            OriginalPrompt = "Create a small test course.",
+            Seed = seed,
+            Terrain = new TerrainSpecification { TerrainType = "hills", Width = 200f, Depth = 200f, MaxHeight = 40f },
+            Spawn = new SpawnSpecification { Position = new Vector3(0f, 25f, 0f) }
+        };
+
+        [Test]
+        public void LoadWorld_NullSpecification_EndsInFailed_DoesNotThrow()
+        {
+            Assert.DoesNotThrow(() => _controller.LoadWorld(null));
+            Assert.AreEqual(WorldGenerationState.Failed, _controller.State);
+        }
+
+        [Test]
+        public void LoadWorld_ValidSpecification_EndsInReady_WithGeneratedWorld()
+        {
+            _controller.LoadWorld(ValidSpecification());
+
+            Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
+            Assert.IsNotNull(_controller.LastGeneratedWorld);
+            Assert.IsTrue(_controller.LastGeneratedWorld.Success);
+        }
+
+        [Test]
+        public void LoadWorld_NeverReachesDesigningState_AndNeverCallsTheDesigner()
+        {
+            var spyDesigner = new SpyDesigner();
+            var controller = new WorldGenerationController(spyDesigner, new WorldSpecificationValidator(), _worldGenerator);
+            var seen = new List<WorldGenerationState>();
+            controller.StateChanged += s => seen.Add(s);
+
+            controller.LoadWorld(ValidSpecification());
+
+            Assert.IsFalse(spyDesigner.WasCalled, "LoadWorld must never call IWorldDesigner — that is what structurally guarantees no LLM call happens on load.");
+            CollectionAssert.DoesNotContain(seen, WorldGenerationState.Designing);
+            CollectionAssert.AreEqual(new[] { WorldGenerationState.Validating, WorldGenerationState.Generating, WorldGenerationState.Ready }, seen);
+        }
+
+        [Test]
+        public void LoadWorld_InvalidSpecification_EndsInFailed_WithValidationFailedReason()
+        {
+            var invalid = ValidSpecification();
+            invalid.OriginalPrompt = ""; // the one genuinely unrecoverable WorldSpecificationValidator error
+
+            _controller.LoadWorld(invalid);
+
+            Assert.AreEqual(WorldGenerationState.Failed, _controller.State);
+            Assert.AreEqual(WorldDesignFailureReason.ValidationFailed, _controller.LastFailureReason);
+        }
+
+        [Test]
+        public void LoadWorld_UnresolvableSpawn_EndsInFailed_NoStaleGeneratedWorld()
+        {
+            var unsafeSpawn = ValidSpecification();
+            unsafeSpawn.Spawn = new SpawnSpecification { Position = new Vector3(0f, -5000f, 0f), AlternateSpawnPoints = new List<Vector3>() };
+
+            _controller.LoadWorld(unsafeSpawn);
+
+            Assert.AreEqual(WorldGenerationState.Failed, _controller.State);
+            Assert.IsNull(GameObject.Find("GeneratedWorld"));
+        }
+
+        [Test]
+        public void LoadWorld_SameSpecificationAndSeed_ProducesDeterministicTerrain()
+        {
+            _controller.LoadWorld(ValidSpecification(seed: 7));
+            var terrainA = _controller.LastGeneratedWorld.Root.transform.Find("Terrain").GetComponent<UnityEngine.Terrain>();
+            float heightA = terrainA.SampleHeight(new Vector3(10f, 0f, 10f));
+
+            _worldGenerator.Clear();
+            _controller.LoadWorld(ValidSpecification(seed: 7)); // same specification content + same seed
+
+            var terrainB = _controller.LastGeneratedWorld.Root.transform.Find("Terrain").GetComponent<UnityEngine.Terrain>();
+            float heightB = terrainB.SampleHeight(new Vector3(10f, 0f, 10f));
+
+            Assert.AreEqual(heightA, heightB, 0.0001f, "loading never generates a new seed — the same specification+seed must reproduce the same terrain.");
+        }
+
+        [Test]
+        public void LoadWorld_DoesNotDuplicateGeneratedWorldRoots_WhenCalledTwice()
+        {
+            _controller.LoadWorld(ValidSpecification());
+            _controller.LoadWorld(ValidSpecification());
+
+            int count = 0;
+            foreach (GameObject go in Object.FindObjectsOfType<GameObject>())
+                if (go.name == "GeneratedWorld") count++;
+
+            Assert.AreEqual(1, count);
+        }
+
+        private sealed class SpyDesigner : IWorldDesigner
+        {
+            public bool WasCalled { get; private set; }
+
+            public Task<WorldDesignOutcome> DesignWorldAsync(WorldDesignRequest request, System.Threading.CancellationToken cancellationToken = default)
+            {
+                WasCalled = true;
+                return Task.FromResult(WorldDesignOutcome.Succeeded(new WorldSpecification { OriginalPrompt = request.Prompt }));
+            }
+        }
+
         // --- Fakes for the failure-path tests above ---
 
         private sealed class AlwaysFailsDesigner : IWorldDesigner

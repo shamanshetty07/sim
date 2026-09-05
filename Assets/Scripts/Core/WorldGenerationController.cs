@@ -12,14 +12,23 @@ namespace Sim.Core
 {
     /// <summary>
     /// The single authoritative entry point for the whole prompt-to-playable-world pipeline:
-    /// GenerateWorldAsync(prompt) / Cancel() / ClearGeneratedWorld(). Owns the
-    /// Idle -&gt; Designing -&gt; Validating -&gt; Generating -&gt; Ready/Failed/Cancelled state
-    /// machine and drives IWorldDesigner -&gt; IWorldSpecificationValidator -&gt; WorldGenerator in
-    /// order. Callers never talk to any of the three directly, and never need to know which
-    /// IWorldDesigner (Mock or a real LLM provider) is active — they only observe
+    /// GenerateWorldAsync(prompt) / LoadWorld(specification) / Cancel() / ClearGeneratedWorld().
+    /// Owns the Idle -&gt; Designing -&gt; Validating -&gt; Generating -&gt; Ready/Failed/Cancelled
+    /// state machine and drives IWorldDesigner -&gt; IWorldSpecificationValidator ->
+    /// WorldGenerator in order. Callers never talk to any of the three directly, and never need
+    /// to know which IWorldDesigner (Mock or a real LLM provider) is active — they only observe
     /// <see cref="State"/> (via <see cref="StateChanged"/>) and read
     /// <see cref="LastGeneratedWorld"/> / <see cref="LastValidSpecification"/> /
     /// <see cref="LastErrorMessage"/> once a terminal state is reached.
+    ///
+    /// Phase 14 (save/load): <see cref="LoadWorld"/> drives the exact same
+    /// Validating -&gt; Generating -&gt; Ready/Failed tail as GenerateWorldAsync (see
+    /// <see cref="ValidateAndGenerate"/>), just starting from an already-known specification
+    /// instead of asking <see cref="_designer"/> for one — Designing is skipped entirely, and
+    /// no code path from LoadWorld ever reaches IWorldDesigner. Deserializing/validating the
+    /// save file itself is entirely Sim.WorldGeneration.Persistence's job (see
+    /// docs/PHASE_14_SAVE_LOAD.md); this class only ever sees the resulting WorldSpecification,
+    /// exactly like every other caller of ValidateAndGenerate.
     ///
     /// Extended Phase 9 from the Phase 8 version, which stopped at validation. Per this
     /// phase's explicit "extend/refactor it, don't create a second competing controller"
@@ -148,9 +157,59 @@ namespace Sim.Core
             Debug.Log($"[WorldGeneration] Design completed in {stopwatch.Elapsed.TotalSeconds:F1}s.");
 
             if (!IsCurrent(token)) return;
+            ValidateAndGenerate(outcome.Specification, token);
+        }
+
+        /// <summary>
+        /// Phase 14 (save/load): validates and generates from a specification that is already
+        /// fully known — a saved WorldSpecification, deserialized and pre-validated by
+        /// Sim.WorldGeneration.Persistence — skipping the design/LLM stage entirely. This is the
+        /// one thing that structurally guarantees loading a save never calls IWorldDesigner: no
+        /// code path from here reaches <see cref="_designer"/> at all. Reuses the exact same
+        /// Validating -&gt; Generating -&gt; Ready/Failed tail GenerateWorldAsync uses (via
+        /// <see cref="ValidateAndGenerate"/>) — not a second validate/generate implementation —
+        /// so a loaded world is held to precisely the same validation and generation guarantees
+        /// as a freshly designed one. Cancels any attempt already in flight first, exactly like
+        /// GenerateWorldAsync, so this participates in the same single-flight semantics.
+        /// </summary>
+        public void LoadWorld(WorldSpecification specification)
+        {
+            CancelInternal();
+            var cts = new CancellationTokenSource();
+            _cts = cts;
+            CancellationToken token = cts.Token;
+
+            LastErrorMessage = null;
+            LastFailureReason = WorldDesignFailureReason.None;
+
+            if (specification == null)
+            {
+                Debug.LogWarning("[WorldGeneration] LoadWorld called with a null specification.");
+                LastErrorMessage = "No world specification to load.";
+                LastFailureReason = WorldDesignFailureReason.InvalidResponse;
+                SetState(WorldGenerationState.Failed);
+                return;
+            }
+
+            Debug.Log("[WorldGeneration] Loading a saved world specification — no design/LLM step.");
+            ValidateAndGenerate(specification, token);
+        }
+
+        /// <summary>
+        /// The shared Validating -&gt; Generating -&gt; Ready/Failed tail both GenerateWorldAsync
+        /// (after a fresh design) and LoadWorld (given an already-known specification) drive —
+        /// extracted so loading a save is held to the exact same validation/generation path as a
+        /// freshly designed world, never a second, slightly-different implementation. Entirely
+        /// synchronous (WorldGenerator.Generate() always was); the CancellationToken checks still
+        /// guard against being superseded by a newer GenerateWorldAsync/LoadWorld call in between
+        /// the async steps of the *other* method, even though nothing in this method itself awaits.
+        /// </summary>
+        private void ValidateAndGenerate(WorldSpecification specification, CancellationToken token)
+        {
+            if (!IsCurrent(token)) return;
             SetState(WorldGenerationState.Validating);
 
-            ValidationResult validation = _validator.Validate(outcome.Specification);
+            ValidationResult validation = _validator.Validate(specification);
 
             if (!validation.IsValid)
             {

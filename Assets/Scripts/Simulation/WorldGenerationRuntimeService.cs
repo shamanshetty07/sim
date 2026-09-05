@@ -4,6 +4,8 @@ using Sim.AI.WorldDesign;
 using Sim.Core;
 using Sim.Gameplay;
 using Sim.WorldGeneration;
+using Sim.WorldGeneration.Models;
+using Sim.WorldGeneration.Persistence;
 using UnityEngine;
 
 namespace Sim.Simulation
@@ -25,6 +27,13 @@ namespace Sim.Simulation
     /// reference to Sim.Drone" boundary (matching WorldGenerator's own "world construction and
     /// drone control stay cleanly separate" rule from Phase 8) — it is also the one place in the
     /// runtime layer allowed to know about all of them.
+    ///
+    /// Phase 14 adds <see cref="SaveWorld"/>/<see cref="LoadWorld"/>, thin forwards onto an
+    /// injected IWorldSaveService (Sim.WorldGeneration.Persistence) and
+    /// WorldGenerationController.LoadWorld — no second generation pipeline, and a successful
+    /// load reaches Ready through the exact same StateChanged handler below that a fresh
+    /// generation already does, so drone placement/course binding/recovery binding/result-seed
+    /// tracking all just work for a loaded world with no additional code.
     /// </summary>
     public sealed class WorldGenerationRuntimeService : IDisposable
     {
@@ -33,6 +42,7 @@ namespace Sim.Simulation
         private readonly CourseGameplayController _courseGameplayController;
         private readonly DroneRecoveryController _droneRecoveryController;
         private readonly CourseResultsController _courseResultsController;
+        private readonly IWorldSaveService _worldSaveService;
 
         /// <summary>The single source of truth for pipeline state — a UI reads State/StateChanged/LastErrorMessage from here, not from this service.</summary>
         public WorldGenerationController Controller => _controller;
@@ -42,22 +52,26 @@ namespace Sim.Simulation
         /// world with no drone in the scene) — in that case Ready is reached normally, just
         /// without a drone being placed (logged once as a warning, not a silent no-op).
         /// <paramref name="courseGameplayController"/>, <paramref name="droneRecoveryController"/>,
-        /// and <paramref name="courseResultsController"/> may likewise be null (e.g. Editor
-        /// tooling with no course gameplay in play) — Ready still places the drone normally, just
-        /// without any course/recovery/results being bound.
+        /// <paramref name="courseResultsController"/>, and <paramref name="worldSaveService"/>
+        /// may likewise be null (e.g. Editor tooling with no course gameplay in play) — Ready
+        /// still places the drone normally, just without any course/recovery/results being bound,
+        /// and <see cref="SaveWorld"/>/<see cref="LoadWorld"/> report a clear "not configured"
+        /// message instead of throwing.
         /// </summary>
         public WorldGenerationRuntimeService(
             WorldGenerationController controller,
             IDroneSpawnTarget droneSpawnTarget,
             CourseGameplayController courseGameplayController = null,
             DroneRecoveryController droneRecoveryController = null,
-            CourseResultsController courseResultsController = null)
+            CourseResultsController courseResultsController = null,
+            IWorldSaveService worldSaveService = null)
         {
             _controller = controller ?? throw new ArgumentNullException(nameof(controller));
             _droneSpawnTarget = droneSpawnTarget;
             _courseGameplayController = courseGameplayController;
             _droneRecoveryController = droneRecoveryController;
             _courseResultsController = courseResultsController;
+            _worldSaveService = worldSaveService;
             _controller.StateChanged += HandleStateChanged;
         }
 
@@ -67,6 +81,50 @@ namespace Sim.Simulation
         public void Cancel() => _controller.Cancel();
 
         public void ClearWorld() => _controller.ClearGeneratedWorld();
+
+        /// <summary>
+        /// Phase 14: persists the currently generated world's specification (the same
+        /// Controller.LastValidSpecification every other Ready-consumer already reads) — not a
+        /// second generation/course pipeline, just a thin forward into IWorldSaveService.
+        /// Returns a short, UI-displayable message; never throws.
+        /// </summary>
+        public string SaveWorld()
+        {
+            if (_worldSaveService == null) return "Save is not available.";
+
+            WorldSpecification specification = _controller.LastValidSpecification;
+            if (specification == null) return "No generated world to save yet.";
+
+            WorldSaveOperationResult result = _worldSaveService.Save(WorldSaveData.FromSpecification(specification));
+            return result.Success ? "World saved." : $"Save failed: {result.ErrorMessage}";
+        }
+
+        /// <summary>
+        /// Phase 14: loads and validates a saved WorldSpecification (IWorldSaveService.Load
+        /// already runs it through the same WorldSpecificationValidator every generated
+        /// specification goes through), then hands it to
+        /// WorldGenerationController.LoadWorld — the exact same Validating -&gt; Generating -&gt;
+        /// Ready/Failed path a fresh generation uses, skipping only the design/LLM step. No
+        /// second generation pipeline; no LLM/network call happens on this path at all.
+        ///
+        /// Returns null when the load was handed off to the controller successfully — from that
+        /// point on, the existing StateChanged-driven status text (WorldGenerationStatusFormatter)
+        /// already reports the outcome (Ready or Failed), exactly as it does for a fresh
+        /// generation, so the UI does not need a second status message for that part. Returns a
+        /// non-null message only for a failure that happens *before* the controller is ever
+        /// involved (no save file, corrupted/invalid save data) — a case StateChanged can't
+        /// report because the controller's state never changes at all.
+        /// </summary>
+        public string LoadWorld()
+        {
+            if (_worldSaveService == null) return "Load is not available.";
+
+            WorldLoadResult result = _worldSaveService.Load();
+            if (!result.Success) return result.ErrorMessage;
+
+            _controller.LoadWorld(result.Data.Specification);
+            return null;
+        }
 
         private void HandleStateChanged(WorldGenerationState state)
         {

@@ -29,5 +29,11 @@ namespace Sim.UI
 
         public static bool IsClearAvailable(WorldGenerationState state) =>
             state == WorldGenerationState.Ready || state == WorldGenerationState.Failed || state == WorldGenerationState.Cancelled;
+
+        /// <summary>Phase 14: Save only makes sense once a world actually exists to save.</summary>
+        public static bool IsSaveAvailable(WorldGenerationState state) => state == WorldGenerationState.Ready;
+
+        /// <summary>Phase 14: Load is available whenever Generate is (i.e. not while busy designing/validating/generating) — loading is just another way to reach Ready.</summary>
+        public static bool IsLoadAvailable(WorldGenerationState state) => IsGenerateAvailable(state);
     }
 }

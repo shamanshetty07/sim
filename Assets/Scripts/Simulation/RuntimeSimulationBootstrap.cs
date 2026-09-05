@@ -4,6 +4,7 @@ using Sim.Drone;
 using Sim.Gameplay;
 using Sim.UI;
 using Sim.WorldGeneration;
+using Sim.WorldGeneration.Persistence;
 using Sim.WorldGeneration.Validation;
 using UnityEngine;
 
@@ -101,7 +102,12 @@ namespace Sim.Simulation
             // "Results is a consumer of course gameplay state" architectural principle.
             Results = new CourseResultsController(Course, Recovery);
 
-            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course, Recovery, Results);
+            // Phase 14: real, file-backed save/load — Application.persistentDataPath, never
+            // Assets/ProjectSettings/the repository itself. Persists only WorldSaveData
+            // (prompt/seed/WorldSpecification), never a Unity runtime object graph.
+            var saveService = new WorldSaveService();
+
+            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course, Recovery, Results, saveService);
 
             if (_ui != null)
                 _ui.Initialize(Service);
