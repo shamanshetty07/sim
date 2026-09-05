@@ -96,14 +96,14 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void GenerateWorldAsync_Cancellation_ThrowsOperationCanceledException()
+        public async Task GenerateWorldAsync_Cancellation_ThrowsOperationCanceledException()
         {
             _service.SimulatedDelayMilliseconds = 5000; // long enough that the cancel below always wins
             var request = new WorldGenerationRequest("prompt");
             var cts = new CancellationTokenSource();
             cts.Cancel();
 
-            Assert.ThrowsAsync<TaskCanceledException>(async () => await _service.GenerateWorldAsync(request, cts.Token));
+            await AsyncAssert.ThrowsAsync<TaskCanceledException>(() => _service.GenerateWorldAsync(request, cts.Token));
         }
 
         [Test]

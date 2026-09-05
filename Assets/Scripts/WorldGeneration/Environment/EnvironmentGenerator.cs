@@ -37,7 +37,7 @@ namespace Sim.WorldGeneration.Environment
 
         public void Generate(List<ObjectSpecification> objects, Transform environmentRoot, TerrainGenerationResult terrain, WorldSeedManager seedManager)
         {
-            Random rng = seedManager.GetRandomForStage("environment");
+            System.Random rng = seedManager.GetRandomForStage("environment");
 
             Transform trees = CreateGroup(environmentRoot, "Trees");
             Transform rocks = CreateGroup(environmentRoot, "Rocks");
@@ -114,7 +114,7 @@ namespace Sim.WorldGeneration.Environment
             return Mathf.Clamp(count, 0, WorldGenerationLimits.MaxObjectCountPerCategory);
         }
 
-        private static Vector3[] BuildClusterCenters(string placementHint, TerrainGenerationResult terrain, Random rng)
+        private static Vector3[] BuildClusterCenters(string placementHint, TerrainGenerationResult terrain, System.Random rng)
         {
             if (!IsHint(placementHint, "cluster")) return null;
 
@@ -125,7 +125,7 @@ namespace Sim.WorldGeneration.Environment
             return centers;
         }
 
-        private static Vector3 PickPosition(string placementHint, TerrainGenerationResult terrain, Random rng, Vector3[] clusterCenters)
+        private static Vector3 PickPosition(string placementHint, TerrainGenerationResult terrain, System.Random rng, Vector3[] clusterCenters)
         {
             if (clusterCenters != null)
             {
@@ -147,14 +147,14 @@ namespace Sim.WorldGeneration.Environment
         private static bool IsHint(string placementHint, string keyword) =>
             !string.IsNullOrEmpty(placementHint) && placementHint.ToLowerInvariant().Contains(keyword);
 
-        private static Vector3 RandomGroundPosition(TerrainGenerationResult terrain, Random rng)
+        private static Vector3 RandomGroundPosition(TerrainGenerationResult terrain, System.Random rng)
         {
             float x = terrain.Origin.x + PlacementMarginMeters + (float)rng.NextDouble() * (terrain.Width - 2f * PlacementMarginMeters);
             float z = terrain.Origin.z + PlacementMarginMeters + (float)rng.NextDouble() * (terrain.Depth - 2f * PlacementMarginMeters);
             return SnapToTerrain(x, z, terrain);
         }
 
-        private static Vector3 PickHighestOfCandidates(TerrainGenerationResult terrain, Random rng, int sampleCount)
+        private static Vector3 PickHighestOfCandidates(TerrainGenerationResult terrain, System.Random rng, int sampleCount)
         {
             Vector3 best = RandomGroundPosition(terrain, rng);
             for (int i = 1; i < sampleCount; i++)
@@ -166,7 +166,7 @@ namespace Sim.WorldGeneration.Environment
             return best;
         }
 
-        private static Vector3 PickLowestOfCandidates(TerrainGenerationResult terrain, Random rng, int sampleCount)
+        private static Vector3 PickLowestOfCandidates(TerrainGenerationResult terrain, System.Random rng, int sampleCount)
         {
             Vector3 best = RandomGroundPosition(terrain, rng);
             for (int i = 1; i < sampleCount; i++)

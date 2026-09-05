@@ -61,8 +61,7 @@ namespace Sim.Tests.EditMode
             var designer = new LLMWorldDesigner(client);
             var request = new WorldDesignRequest("prompt");
 
-            WorldDesignOutcome outcome = null;
-            Assert.DoesNotThrowAsync(async () => outcome = await designer.DesignWorldAsync(request));
+            WorldDesignOutcome outcome = await designer.DesignWorldAsync(request);
 
             Assert.IsFalse(outcome.Success);
             Assert.AreEqual(WorldDesignFailureReason.Unavailable, outcome.FailureReason);
@@ -88,8 +87,7 @@ namespace Sim.Tests.EditMode
             var designer = new LLMWorldDesigner(client);
             var request = new WorldDesignRequest("prompt");
 
-            WorldDesignOutcome outcome = null;
-            Assert.DoesNotThrowAsync(async () => outcome = await designer.DesignWorldAsync(request));
+            WorldDesignOutcome outcome = await designer.DesignWorldAsync(request);
 
             Assert.IsFalse(outcome.Success);
             Assert.AreEqual(WorldDesignFailureReason.Cancelled, outcome.FailureReason);
@@ -100,8 +98,7 @@ namespace Sim.Tests.EditMode
         {
             var designer = new LLMWorldDesigner(new FakeLLMClient());
 
-            WorldDesignOutcome outcome = null;
-            Assert.DoesNotThrowAsync(async () => outcome = await designer.DesignWorldAsync(null));
+            WorldDesignOutcome outcome = await designer.DesignWorldAsync(null);
 
             Assert.IsFalse(outcome.Success);
         }
@@ -109,11 +106,11 @@ namespace Sim.Tests.EditMode
         // --- Provider stub configuration behaviour (no real network in any of these) ---
 
         [Test]
-        public void OpenAiLLMClient_NoKey_ThrowsNotConfigured()
+        public async Task OpenAiLLMClient_NoKey_ThrowsNotConfigured()
         {
             var client = new OpenAiLLMClient(apiKeyOverride: "");
-            Assert.ThrowsAsync<LLMNotConfiguredException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            await AsyncAssert.ThrowsAsync<LLMNotConfiguredException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
         }
 
         [Test]
@@ -126,19 +123,19 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void AnthropicLLMClient_NoKey_ThrowsNotConfigured()
+        public async Task AnthropicLLMClient_NoKey_ThrowsNotConfigured()
         {
             var client = new AnthropicLLMClient(apiKeyOverride: "");
-            Assert.ThrowsAsync<LLMNotConfiguredException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            await AsyncAssert.ThrowsAsync<LLMNotConfiguredException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
         }
 
         [Test]
-        public void LocalLLMClient_NoEndpoint_ThrowsNotConfigured()
+        public async Task LocalLLMClient_NoEndpoint_ThrowsNotConfigured()
         {
             var client = new LocalLLMClient(endpointOverride: "");
-            Assert.ThrowsAsync<LLMNotConfiguredException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            await AsyncAssert.ThrowsAsync<LLMNotConfiguredException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
         }
     }
 }

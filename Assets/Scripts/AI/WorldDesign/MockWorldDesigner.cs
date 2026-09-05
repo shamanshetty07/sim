@@ -84,7 +84,13 @@ namespace Sim.AI.WorldDesign
                 },
                 Weather = new WeatherSpecification { Type = "clear", FogDensity01 = 0.05f, WindStrength01 = 0.2f },
                 Lighting = new LightingSpecification { TimeOfDayHours = 17f, SunIntensity = 1.1f },
-                Spawn = new SpawnSpecification { Position = new Vector3(0f, 30f, 0f) },
+                // Y must clear the terrain's own declared MaxHeight (400, above) with margin — a
+                // "mountain" TerrainType with HeightVariation01=0.8 can genuinely reach close to
+                // that full height at (0,0), so a low fixed Y (30, previously) was embedded in
+                // the terrain for most seeds, failing SpawnResolver's ground-clearance check.
+                // Only found by actually running this pipeline end-to-end in a real Editor —
+                // never a behavior change to terrain/obstacles/anything else.
+                Spawn = new SpawnSpecification { Position = new Vector3(0f, 420f, 0f) },
                 Metadata = new WorldGenerationMetadata
                 {
                     ProviderName = "MockWorldDesigner",

@@ -42,7 +42,7 @@ namespace Sim.WorldGeneration.Terrain
 
         public TerrainGenerationResult Generate(TerrainSpecification specification, Transform parent, WorldSeedManager seedManager)
         {
-            Random rng = seedManager.GetRandomForStage("terrain");
+            System.Random rng = seedManager.GetRandomForStage("terrain");
 
             float width = Mathf.Max(specification.Width, 10f);
             float depth = Mathf.Max(specification.Depth, 10f);
@@ -70,7 +70,7 @@ namespace Sim.WorldGeneration.Terrain
             return new TerrainGenerationResult(terrainObject, terrain, origin, width, depth, maxHeight);
         }
 
-        private static float[,] GenerateHeights(string terrainType, float heightVariation01, Random rng)
+        private static float[,] GenerateHeights(string terrainType, float heightVariation01, System.Random rng)
         {
             var heights = new float[HeightmapResolution, HeightmapResolution];
 

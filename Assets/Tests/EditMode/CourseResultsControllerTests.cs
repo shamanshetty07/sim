@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using Sim.Gameplay;
 using Sim.Simulation;
+using Sim.WorldGeneration;
+using Sim.WorldGeneration.Models;
+using Sim.WorldGeneration.Terrain;
 using UnityEngine;
 
 namespace Sim.Tests.EditMode
@@ -59,9 +62,26 @@ namespace Sim.Tests.EditMode
             {
                 var go = new GameObject($"gate_{i}");
                 go.transform.SetParent(root.transform);
+                go.AddComponent<BoxCollider>(); // CheckpointTrigger requires a concrete Collider — see ObstacleGenerator's own identical ordering
                 go.AddComponent<CheckpointTrigger>().Configure(i);
             }
             return new CheckpointManager(root);
+        }
+
+        /// <summary>
+        /// A real, minimal WorldRuntimeBounds — DroneRecoveryController.Tick() no-ops entirely
+        /// with none bound (Bind() must be called before Tick() does anything at all), even for
+        /// the NaN/Infinity path, which otherwise never touches this instance's actual content.
+        /// Only the two tests that drive recovery through a real Tick() need this; the rest of
+        /// this file's tests don't touch DroneRecoveryController's bound state at all.
+        /// </summary>
+        private WorldRuntimeBounds BuildBounds()
+        {
+            var root = new GameObject("Terrain Root");
+            _obstacleRoots.Add(root);
+            var spec = new TerrainSpecification { TerrainType = "flat", Width = 100f, Depth = 100f, MaxHeight = 10f };
+            TerrainGenerationResult terrain = new TerrainGenerator().Generate(spec, root.transform, new WorldSeedManager(1));
+            return new WorldRuntimeBounds(terrain);
         }
 
         private (CourseGameplayController course, CheckpointManager checkpoints) BuildBoundCourse(int checkpointCount)
@@ -141,6 +161,7 @@ namespace Sim.Tests.EditMode
             var stateSource = new MutablePositionStateSource();
             var config = new DroneRecoveryConfig { CooldownDurationSeconds = 1f };
             var recovery = new DroneRecoveryController(_spawnTarget, stateSource, course, config, _clock);
+            recovery.Bind(BuildBounds(), Vector3.zero, Quaternion.identity);
             var results = new CourseResultsController(course, recovery);
 
             course.StartRace();
@@ -202,6 +223,7 @@ namespace Sim.Tests.EditMode
             (CourseGameplayController course, CheckpointManager _) = BuildBoundCourse(2);
             var stateSource = new MutablePositionStateSource();
             var recovery = new DroneRecoveryController(_spawnTarget, stateSource, course, new DroneRecoveryConfig(), _clock);
+            recovery.Bind(BuildBounds(), Vector3.zero, Quaternion.identity);
 
             course.StartRace();
             _clock.NowSeconds += CourseGameplayController.CountdownDurationSeconds;

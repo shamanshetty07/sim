@@ -25,8 +25,7 @@ namespace Sim.Tests.EditMode
             var service = new OpenWorldReactorWorldGenerationService(new NoCredentialsProvider());
             var request = new WorldGenerationRequest("Create a futuristic city.");
 
-            WorldGenerationOutcome outcome = null;
-            Assert.DoesNotThrowAsync(async () => outcome = await service.GenerateWorldAsync(request));
+            WorldGenerationOutcome outcome = await service.GenerateWorldAsync(request);
 
             Assert.IsFalse(outcome.Success);
             Assert.AreEqual(WorldGenerationFailureReason.NotConfigured, outcome.FailureReason);
@@ -37,15 +36,14 @@ namespace Sim.Tests.EditMode
         {
             var service = new OpenWorldReactorWorldGenerationService(new NoCredentialsProvider());
 
-            WorldGenerationOutcome outcome = null;
-            Assert.DoesNotThrowAsync(async () => outcome = await service.GenerateWorldAsync(null));
+            WorldGenerationOutcome outcome = await service.GenerateWorldAsync(null);
 
             Assert.IsFalse(outcome.Success);
             Assert.AreEqual(WorldGenerationFailureReason.InvalidResponse, outcome.FailureReason);
         }
 
         [Test]
-        public void MintSessionTokenAsync_NoCredentials_ThrowsReactorNotConfiguredException()
+        public async Task MintSessionTokenAsync_NoCredentials_ThrowsReactorNotConfiguredException()
         {
             // The lower-level entry point still throws (it's a "cannot proceed at all" guard,
             // the same category as argument validation — see the exception's own remarks and
@@ -53,8 +51,8 @@ namespace Sim.Tests.EditMode
             // the one that must never let this escape uncaught, covered above.
             var service = new OpenWorldReactorWorldGenerationService(new NoCredentialsProvider());
 
-            Assert.ThrowsAsync<ReactorNotConfiguredException>(async () =>
-                await service.MintSessionTokenAsync("reactor/lingbot-world-2"));
+            await AsyncAssert.ThrowsAsync<ReactorNotConfiguredException>(() =>
+                service.MintSessionTokenAsync("reactor/lingbot-world-2"));
         }
     }
 }

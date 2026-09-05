@@ -60,13 +60,13 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void NoApiKey_DoesNotSendAnyRequest()
+        public async Task NoApiKey_DoesNotSendAnyRequest()
         {
             var transport = new FakeHttpTransport();
             var client = new AnthropicLLMClient(apiKeyOverride: "", transport: transport);
 
-            Assert.ThrowsAsync<LLMNotConfiguredException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            await AsyncAssert.ThrowsAsync<LLMNotConfiguredException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
 
             Assert.AreEqual(0, transport.CallCount, "An unconfigured client must never reach the transport at all.");
         }
@@ -228,8 +228,7 @@ namespace Sim.Tests.EditMode
             };
             var client = new AnthropicLLMClient(apiKeyOverride: "test-key", transport: transport);
 
-            LLMCompletionResult result = null;
-            Assert.DoesNotThrowAsync(async () => result = await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            LLMCompletionResult result = await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" });
 
             Assert.IsFalse(result.Success);
         }
@@ -243,14 +242,13 @@ namespace Sim.Tests.EditMode
             };
             var client = new AnthropicLLMClient(apiKeyOverride: "test-key", transport: transport);
 
-            LLMCompletionResult result = null;
-            Assert.DoesNotThrowAsync(async () => result = await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            LLMCompletionResult result = await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" });
 
             Assert.IsFalse(result.Success);
         }
 
         [Test]
-        public void Timeout_ThrowsLLMRequestTimeoutException_NotGenericFailure()
+        public async Task Timeout_ThrowsLLMRequestTimeoutException_NotGenericFailure()
         {
             var transport = new FakeHttpTransport
             {
@@ -260,12 +258,12 @@ namespace Sim.Tests.EditMode
             };
             var client = new AnthropicLLMClient(apiKeyOverride: "test-key", transport: transport, timeoutSecondsOverride: 0);
 
-            Assert.ThrowsAsync<LLMRequestTimeoutException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
+            await AsyncAssert.ThrowsAsync<LLMRequestTimeoutException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }));
         }
 
         [Test]
-        public void CallerCancellation_ThrowsOperationCanceledException_NotTimeout()
+        public async Task CallerCancellation_ThrowsOperationCanceledException_NotTimeout()
         {
             var transport = new FakeHttpTransport
             {
@@ -277,8 +275,8 @@ namespace Sim.Tests.EditMode
             using var cts = new CancellationTokenSource();
             cts.Cancel();
 
-            Assert.ThrowsAsync<System.OperationCanceledException>(async () =>
-                await client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }, cts.Token));
+            await AsyncAssert.ThrowsAsync<System.OperationCanceledException>(() =>
+                client.CompleteAsync(new LLMCompletionRequest { UserPrompt = "x" }, cts.Token));
         }
 
         [Test]

@@ -66,6 +66,7 @@ namespace Sim.Tests.EditMode
             {
                 var go = new GameObject($"zzz_last_gate_{i}");
                 go.transform.SetParent(root.transform);
+                go.AddComponent<BoxCollider>(); // CheckpointTrigger requires a concrete Collider — see ObstacleGenerator's own identical ordering
                 go.AddComponent<CheckpointTrigger>().Configure(i);
             }
             return root;

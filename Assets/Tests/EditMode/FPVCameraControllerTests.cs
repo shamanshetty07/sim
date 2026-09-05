@@ -28,7 +28,7 @@ namespace Sim.Tests.EditMode
             _go = new GameObject("TestCamera");
             var controller = _go.AddComponent<FPVCameraController>();
 
-            Assert.IsNotNull(_go.GetComponent<Camera>());
+            Assert.IsNotNull(_go.GetComponent<UnityEngine.Camera>());
             Assert.IsNotNull(controller);
         }
 
@@ -48,7 +48,7 @@ namespace Sim.Tests.EditMode
         {
             _go = new GameObject("TestCamera");
             var controller = _go.AddComponent<FPVCameraController>();
-            var camera = _go.GetComponent<Camera>();
+            var camera = _go.GetComponent<UnityEngine.Camera>();
 
             camera.fieldOfView = 40f; // deliberately wrong, to prove ApplyLensSettings corrects it
             controller.ApplyLensSettings();

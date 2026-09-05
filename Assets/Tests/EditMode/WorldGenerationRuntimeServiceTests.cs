@@ -103,7 +103,7 @@ namespace Sim.Tests.EditMode
         public async Task NullSpawnTarget_ReachesReady_DoesNotThrow()
         {
             using var serviceWithoutDrone = new WorldGenerationRuntimeService(_controller, null);
-            Assert.DoesNotThrowAsync(async () => await serviceWithoutDrone.GenerateWorldAsync("Create a mountain course."));
+            await serviceWithoutDrone.GenerateWorldAsync("Create a mountain course.");
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
 
@@ -174,10 +174,10 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void NullCourseGameplayController_ReachesReady_DoesNotThrow()
+        public async Task NullCourseGameplayController_ReachesReady_DoesNotThrow()
         {
             using var serviceWithoutCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, null);
-            Assert.DoesNotThrowAsync(async () => await serviceWithoutCourse.GenerateWorldAsync("Create a mountain course."));
+            await serviceWithoutCourse.GenerateWorldAsync("Create a mountain course.");
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
 
@@ -224,10 +224,10 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void NullDroneRecoveryController_ReachesReady_DoesNotThrow()
+        public async Task NullDroneRecoveryController_ReachesReady_DoesNotThrow()
         {
             using var serviceWithoutRecovery = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null);
-            Assert.DoesNotThrowAsync(async () => await serviceWithoutRecovery.GenerateWorldAsync("Create a mountain course."));
+            await serviceWithoutRecovery.GenerateWorldAsync("Create a mountain course.");
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
 
@@ -258,10 +258,10 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
-        public void NullCourseResultsController_ReachesReady_DoesNotThrow()
+        public async Task NullCourseResultsController_ReachesReady_DoesNotThrow()
         {
             using var serviceWithoutResults = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null);
-            Assert.DoesNotThrowAsync(async () => await serviceWithoutResults.GenerateWorldAsync("Create a mountain course."));
+            await serviceWithoutResults.GenerateWorldAsync("Create a mountain course.");
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
 

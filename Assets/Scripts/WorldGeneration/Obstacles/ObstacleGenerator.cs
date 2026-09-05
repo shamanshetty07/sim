@@ -148,7 +148,7 @@ namespace Sim.WorldGeneration.Obstacles
             List<ObstacleSpecification> placedSpecs,
             List<GameObject> placedInstances)
         {
-            Random rng = seedManager.GetRandomForStage("course_gates");
+            System.Random rng = seedManager.GetRandomForStage("course_gates");
             string style = (course?.Style ?? "freestyle").ToLowerInvariant();
             bool mentionsTechnical = style.Contains("technical");
             bool mentionsHighSpeed = style.Contains("high_speed") || style.Contains("high-speed") || style.Contains("speed");
