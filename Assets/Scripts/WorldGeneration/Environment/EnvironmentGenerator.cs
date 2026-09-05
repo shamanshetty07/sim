@@ -18,6 +18,10 @@ namespace Sim.WorldGeneration.Environment
     /// SphereCollider on spheres, CapsuleCollider on cylinders) — nothing extra is needed here
     /// for solid objects to block the drone. The one deliberate exception is decorative-only
     /// water features, which the registry itself strips colliders from.
+    ///
+    /// Phase 15: Generate() enforces WorldGenerationLimits.MaxTotalEnvironmentObjectCount as a
+    /// running total across every category — see its own remarks on why the per-category/
+    /// per-category-count limits alone don't prevent a pathologically large combined count.
     /// </summary>
     public sealed class EnvironmentGenerator
     {
@@ -43,12 +47,23 @@ namespace Sim.WorldGeneration.Environment
 
             if (objects == null) return;
 
+            // Phase 15: MaxObjectCountPerCategory (per category) and MaxEnvironmentObjectCategories
+            // (category count) are each already bounded, but their product is not — a
+            // pathological specification could otherwise request up to 64 * 20000 objects. This
+            // running total is the one place that actually sees the resolved count for *either*
+            // an explicit Count or a Density01-derived one (ResolveCount only bounds each
+            // category individually), so it's the correct place to cap the combined total — see
+            // WorldGenerationLimits.MaxTotalEnvironmentObjectCount remarks.
+            int totalPlaced = 0;
+
             foreach (ObjectSpecification spec in objects)
             {
                 if (spec == null) continue;
+                if (totalPlaced >= WorldGenerationLimits.MaxTotalEnvironmentObjectCount) break;
 
                 Transform group = ResolveGroup(spec.Category, trees, rocks, buildings, vegetation, structures);
-                int count = ResolveCount(spec, terrain);
+                int count = Mathf.Min(ResolveCount(spec, terrain), WorldGenerationLimits.MaxTotalEnvironmentObjectCount - totalPlaced);
+                totalPlaced += count;
 
                 // Cluster placement hints pick from a handful of seeded centers rather than a
                 // fresh random center per object, so "dense_cluster" actually looks clustered.

@@ -1,7 +1,19 @@
 # Architecture — AI-Generated FPV Drone Simulator
 
-Status: **Phase 14 — save/load is implemented.** `Sim.WorldGeneration.
-Persistence` (`WorldSaveData`/`WorldSaveJsonSerializer`/`WorldSaveValidator`/
+Status: **Phase 15 — performance optimization pass complete.** No
+architecture change: existing controllers/state machines/generators are
+unchanged in shape. `TerrainGenerator` hoists a redundant per-pixel
+fractal-noise normalization to a one-time computation;
+`TelemetryUI`/`CourseHUD` skip reformatting/reassigning UI text for
+values that haven't changed since the last frame; two new
+`WorldGenerationLimits` constants (`MaxTotalEnvironmentObjectCount`,
+`MaxAlternateSpawnPoints`) close a combinatorial generated-object-count
+gap and an unbounded-physics-query gap that no existing limit alone
+prevented. All world generation remains deterministic (same
+`WorldSpecification` + seed → same result). See
+`docs/PHASE_15_PERFORMANCE.md`. Previously (Phase 14 status): save/load
+is implemented — `Sim.WorldGeneration.Persistence`
+(`WorldSaveData`/`WorldSaveJsonSerializer`/`WorldSaveValidator`/
 `WorldSaveService`) persists the prompt/seed/`WorldSpecification`/metadata
 that produced a generated world — never a Terrain object, GameObject, or
 any other Unity runtime object graph — and `WorldGenerationController.
@@ -11,7 +23,7 @@ fresh prompt uses, never calling the LLM. See
 summary; see `docs/IMPLEMENTATION_PLAN.md` for the full phase-by-phase
 status table, including Phases 11-13 (course gameplay/checkpoints/
 timing/HUD, crash/fall recovery, course results) this header previously
-omitted entirely (it had drifted stale at "Phase 10" until this phase
+omitted entirely (it had drifted stale at "Phase 10" until Phase 14
 corrected it). Previously (Phase 10 status below): **`AnthropicLLMClient`
 is a real, working LLM provider.** Selecting `LLM`/`Anthropic` mode in
 `RuntimeSimulationBootstrap` (Phase 9) now reaches a real Anthropic
@@ -561,13 +573,13 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 3 | FPV Camera + OSD Engineer | `Scripts/Camera/*`, `Scripts/UI/FPVHUD.cs`, `TelemetryUI.cs` |
 | 4 | AI World Designer | `Scripts/WorldGeneration/Models/*` (incl. `CourseSpecification`, Phase 7), `Scripts/WorldGeneration/Adapters/*` (Reactor-only, isolated) |
 | 5 | AI Integration Engineer | `Scripts/AI/WorldDesign/*` (authoritative, Phase 7) — `Scripts/AI/*` (Reactor client, Phases 5-6) is isolated/optional |
-| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (real logic since Phase 6 — `WorldSpecificationValidator`, `WorldGenerationLimits`) |
+| 6 | World Validation Engineer | `Scripts/WorldGeneration/Validation/*` (real logic since Phase 6 — `WorldSpecificationValidator`, `WorldGenerationLimits`, extended Phase 15 with `MaxTotalEnvironmentObjectCount`/`MaxAlternateSpawnPoints` — see docs/PHASE_15_PERFORMANCE.md) |
 | 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs`, `GeneratedWorldResult.cs`, `Spawn/*` (implemented Phase 8) |
 | 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` (implemented Phase 8 — Unity `Terrain`, see docs/WORLD_GENERATION.md) |
 | 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*` (`EnvironmentGenerator`, `IWorldPrefabRegistry`/`PrimitiveWorldPrefabRegistry` — implemented Phase 8) |
 | 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*` (implemented Phase 8); `Scripts/Gameplay/*` — checkpoint generation glue (`CheckpointManager`, `CheckpointTrigger`, Phase 8) plus course flow/timing (`CourseGameplayController`, `RaceTimer`, `IGameplayClock`, `CourseState`, `CourseValidator`, Phase 11) plus crash/fall recovery (`DroneRecoveryController`, `DroneRecoveryConfig`, `DroneRecoveryState`, `Scripts/WorldGeneration/WorldRuntimeBounds.cs`, Phase 12 — see docs/PHASE_12_RECOVERY.md) plus race results (`CourseResult`, `CourseResultsController`, Phase 13 — see docs/PHASE_13_COURSE_RESULTS.md) |
 | 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout; `Scripts/UI/CourseHUD.cs`/`CourseStatusFormatter.cs` (race HUD, Phase 11); `Scripts/UI/CourseResultsUI.cs`/`CourseResultFormatter.cs` (results panel, Phase 13) |
-| 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5 |
+| 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5; concrete Phase 15 pass across `Scripts/WorldGeneration/Terrain/TerrainGenerator.cs`, `Scripts/UI/TelemetryUI.cs`, `Scripts/UI/CourseHUD.cs`, `Scripts/WorldGeneration/Validation/*`, `Scripts/WorldGeneration/Environment/EnvironmentGenerator.cs` — see docs/PHASE_15_PERFORMANCE.md |
 | 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` (`WorldSaveData`, `WorldSaveJsonSerializer`, `WorldSaveValidator`, `WorldSaveService` — implemented Phase 14, see docs/PHASE_14_SAVE_LOAD.md) |
 | 14 | QA Engineer | `Assets/Tests/EditMode/*`, `Assets/Tests/PlayMode/*` |
 

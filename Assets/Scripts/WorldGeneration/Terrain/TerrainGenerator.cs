@@ -28,6 +28,18 @@ namespace Sim.WorldGeneration.Terrain
     {
         private const int HeightmapResolution = 129;
 
+        // FractalNoise's own octaves/persistence/lacunarity — always these three literal
+        // values at its one call site (SampleHeight01). Named here so the normalization
+        // constant below can be computed exactly once (at class load, not once per heightmap
+        // pixel) instead of being re-summed by FractalNoise on every one of the 129*129 calls
+        // a single terrain generation makes — a real, if small, repeated calculation Phase 15
+        // removed. Purely an internal micro-optimization: output is bit-for-bit identical,
+        // since sum_{i=0}^{n-1} persistence^i is the same value every time regardless of x/z.
+        private const int FractalNoiseOctaves = 4;
+        private const float FractalNoisePersistence = 0.5f;
+        private const float FractalNoiseLacunarity = 2f;
+        private static readonly float FractalNoiseNormalization = ComputeFractalNoiseNormalization();
+
         public TerrainGenerationResult Generate(TerrainSpecification specification, Transform parent, WorldSeedManager seedManager)
         {
             Random rng = seedManager.GetRandomForStage("terrain");
@@ -84,7 +96,7 @@ namespace Sim.WorldGeneration.Terrain
 
         private static float SampleHeight01(float nx, float nz, string type, float variation, float offsetX, float offsetZ)
         {
-            float noise = FractalNoise(nx * 4f + offsetX, nz * 4f + offsetZ, octaves: 4, persistence: 0.5f, lacunarity: 2f);
+            float noise = FractalNoise(nx * 4f + offsetX, nz * 4f + offsetZ);
 
             switch (type)
             {
@@ -106,19 +118,39 @@ namespace Sim.WorldGeneration.Terrain
             }
         }
 
-        /// <summary>Sum of several Perlin octaves at decreasing amplitude/increasing frequency, normalized to ~0-1. The standard "fractal Brownian motion" technique for natural-looking terrain noise.</summary>
-        private static float FractalNoise(float x, float z, int octaves, float persistence, float lacunarity)
+        /// <summary>
+        /// Sum of several Perlin octaves at decreasing amplitude/increasing frequency,
+        /// normalized to ~0-1 by the precomputed <see cref="FractalNoiseNormalization"/> (Phase
+        /// 15: previously re-accumulated from scratch on every call — the same 4 additions,
+        /// producing the same constant, 129*129 times per terrain generation). The standard
+        /// "fractal Brownian motion" technique for natural-looking terrain noise. Output is
+        /// unchanged from before this optimization — same octaves/persistence/lacunarity, same
+        /// normalization value, just computed once instead of redundantly every pixel.
+        /// </summary>
+        private static float FractalNoise(float x, float z)
         {
-            float total = 0f, amplitude = 1f, frequency = 1f, maxPossible = 0f;
-            for (int i = 0; i < octaves; i++)
+            float total = 0f, amplitude = 1f, frequency = 1f;
+            for (int i = 0; i < FractalNoiseOctaves; i++)
             {
                 total += Mathf.PerlinNoise(x * frequency, z * frequency) * amplitude;
-                maxPossible += amplitude;
-                amplitude *= persistence;
-                frequency *= lacunarity;
+                amplitude *= FractalNoisePersistence;
+                frequency *= FractalNoiseLacunarity;
             }
 
-            return total / maxPossible;
+            return total / FractalNoiseNormalization;
+        }
+
+        /// <summary>sum_{i=0}^{octaves-1} persistence^i — computed once (static readonly field initializer), not once per heightmap pixel.</summary>
+        private static float ComputeFractalNoiseNormalization()
+        {
+            float maxPossible = 0f, amplitude = 1f;
+            for (int i = 0; i < FractalNoiseOctaves; i++)
+            {
+                maxPossible += amplitude;
+                amplitude *= FractalNoisePersistence;
+            }
+
+            return maxPossible;
         }
 
         /// <summary>A trench along the Z axis at the terrain's X center, walls rising toward the X edges.</summary>

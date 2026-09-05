@@ -36,6 +36,13 @@ namespace Sim.UI
         private DroneRecoveryController _recovery;
         private float _messageClearAtUnscaledTime;
 
+        // Phase 15: dirty-check against the last displayed elapsed time. Unlike the countdown/
+        // checkpoint text below (which changes throughout Racing, when this HUD matters most),
+        // ElapsedSeconds is frozen indefinitely once Finished — without this, an idle results
+        // screen would reformat and reassign an identical string every rendered frame for as
+        // long as the player leaves it up. NaN so the very first frame always paints.
+        private float _lastDisplayedElapsedSeconds = float.NaN;
+
         private void Awake()
         {
             if (_startButton != null) _startButton.onClick.AddListener(OnStartClicked);
@@ -141,7 +148,18 @@ namespace Sim.UI
             if (_controller == null) return;
 
             if (_timerText != null)
-                _timerText.text = CourseStatusFormatter.FormatTimer(_controller.ElapsedSeconds);
+            {
+                float elapsed = _controller.ElapsedSeconds;
+                // Equality, not an epsilon compare: the goal is only to skip reformatting an
+                // exactly-unchanged value (frozen post-Finish) — RaceTimer genuinely does not
+                // produce the same non-frozen value twice in a row, so this never suppresses a
+                // real update while Racing.
+                if (elapsed != _lastDisplayedElapsedSeconds)
+                {
+                    _lastDisplayedElapsedSeconds = elapsed;
+                    _timerText.text = CourseStatusFormatter.FormatTimer(elapsed);
+                }
+            }
 
             if (_checkpointText != null)
             {

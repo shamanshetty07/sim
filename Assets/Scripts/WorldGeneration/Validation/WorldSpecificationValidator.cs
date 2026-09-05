@@ -286,6 +286,17 @@ namespace Sim.WorldGeneration.Validation
             spec.Spawn.Position = RepairVector(spec.Spawn.Position, new Vector3(0f, 5f, 0f), "Spawn.Position", errors);
             spec.Spawn.RotationEuler = RepairVector(spec.Spawn.RotationEuler, Vector3.zero, "Spawn.RotationEuler", errors);
             spec.Spawn.AlternateSpawnPoints ??= new List<Vector3>();
+
+            // Phase 15: SpawnResolver does one real Physics.OverlapSphere query per alternate it
+            // tries — bounding the list length here is what keeps that a small, fixed, generation
+            // -time cost regardless of what an untrusted source (LLM output, or a save file —
+            // see docs/PHASE_14_SAVE_LOAD.md) put in this list.
+            if (spec.Spawn.AlternateSpawnPoints.Count > WorldGenerationLimits.MaxAlternateSpawnPoints)
+            {
+                int removed = spec.Spawn.AlternateSpawnPoints.Count - WorldGenerationLimits.MaxAlternateSpawnPoints;
+                spec.Spawn.AlternateSpawnPoints.RemoveRange(WorldGenerationLimits.MaxAlternateSpawnPoints, removed);
+                errors.Add(Warning("Spawn.AlternateSpawnPoints", $"Trimmed {removed} alternate spawn points over the {WorldGenerationLimits.MaxAlternateSpawnPoints} limit."));
+            }
         }
 
         private static void ValidateFlight(WorldSpecification spec, List<ValidationError> errors)

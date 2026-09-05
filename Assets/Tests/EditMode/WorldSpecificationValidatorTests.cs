@@ -227,6 +227,31 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
+        public void Validate_TooManyAlternateSpawnPoints_TrimsToLimit()
+        {
+            var spec = ValidSpec();
+            spec.Spawn.AlternateSpawnPoints = new List<Vector3>();
+            for (int i = 0; i < WorldGenerationLimits.MaxAlternateSpawnPoints + 10; i++)
+                spec.Spawn.AlternateSpawnPoints.Add(new Vector3(i, 0f, 0f));
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.IsTrue(result.IsValid);
+            Assert.AreEqual(WorldGenerationLimits.MaxAlternateSpawnPoints, result.RepairedSpecification.Spawn.AlternateSpawnPoints.Count);
+        }
+
+        [Test]
+        public void Validate_AlternateSpawnPointsWithinLimit_NotTrimmed()
+        {
+            var spec = ValidSpec();
+            spec.Spawn.AlternateSpawnPoints = new List<Vector3> { new Vector3(1f, 0f, 0f), new Vector3(2f, 0f, 0f) };
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.AreEqual(2, result.RepairedSpecification.Spawn.AlternateSpawnPoints.Count);
+        }
+
+        [Test]
         public void Validate_NegativeCheckpointIndex_ClearsToNull()
         {
             var spec = ValidSpec();

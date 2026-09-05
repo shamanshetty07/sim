@@ -21,7 +21,7 @@ check it before assuming a phase needs to start from scratch.
 | 12 | Environment objects | ✅ Covered by Phase 8 (`EnvironmentGenerator`, `PrimitiveWorldPrefabRegistry`) — same note |
 | 13 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
 | 14 | Save/load | ✅ Done — `Sim.WorldGeneration.Persistence` (`WorldSaveData`, `IWorldSaveSerializer`/`WorldSaveJsonSerializer`, `WorldSaveValidator`, `IWorldSaveService`/`WorldSaveService`). Persists prompt + seed + `WorldSpecification` + metadata only — never a Unity runtime object graph. `WorldGenerationController` gained `LoadWorld(specification)`, sharing the exact same Validating→Generating→Ready/Failed tail as `GenerateWorldAsync` (extracted into `ValidateAndGenerate`) — Designing/`IWorldDesigner` is structurally never reached on load. `WorldGenerationRuntimeService.SaveWorld()`/`LoadWorld()` are thin forwards; a successful load reaches Ready through the same existing StateChanged handler a fresh generation already uses, so drone spawn/course binding/recovery binding/results all just work. `WorldGenerationUI` gained Save/Load buttons — no persistence logic in the UI. EditMode tests. See docs/PHASE_14_SAVE_LOAD.md. Unverified in a live Editor (none available here). |
-| 15 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
+| 15 | Performance optimization | ✅ Done — audited the full runtime/generation path; flight loop, camera, course/recovery tick methods already had no per-frame allocations and were left unchanged. Concrete fixes: `TerrainGenerator.FractalNoise` no longer re-derives its normalization constant per heightmap pixel; `TelemetryUI`/`CourseHUD` dirty-check Mode/Armed/FPS/timer text against their last-displayed value before reformatting; a new `WorldGenerationLimits.MaxAlternateSpawnPoints` bounds `SpawnResolver`'s physics-query loop; a new `WorldGenerationLimits.MaxTotalEnvironmentObjectCount` closes the combinatorial per-category-count-times-category-count gap the existing limits didn't cover. Determinism verified unchanged (same specification+seed → same result). EditMode tests added. See docs/PHASE_15_PERFORMANCE.md — no Unity Profiler available in this environment; static analysis only, documented honestly. |
 | 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 | 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
 | 18 | Crash/fall detection & automatic respawn | ✅ Done — `DroneRecoveryController` (Monitoring/RecoveryPending/Recovering/Cooldown, separate from `CourseState`/`WorldGenerationState`), position-vs-world-bounds detection only (no orientation/velocity thresholds — see docs/PHASE_12_RECOVERY.md for why), `WorldRuntimeBounds` (new, `Sim.WorldGeneration`, reuses `TerrainGenerationResult` — no duplicated terrain math), `IDroneStateSource` (new, alongside `IDroneSpawnTarget`, both implemented by the existing `DroneControllerSpawnTarget`). `CheckpointManager` gained `SetSuppressed`/`IsSuppressed`; `CourseGameplayController` gained one passthrough (`SetCheckpointProcessingSuppressed`) — both small, targeted additions, not new systems. EditMode tests. See docs/PHASE_12_RECOVERY.md. Unverified in a live Editor (none available here). |
@@ -837,6 +837,112 @@ spawn). All EditMode, all real (no fabricated Play Mode results;
 no test touches a real network, the Anthropic API, Reactor, or an API
 key) — see docs/PHASE_14_SAVE_LOAD.md "Testing" for exactly what is/isn't
 covered and the full manual Unity checklist.
+
+## Phase 15 detail
+
+Performance audit and targeted hardening across Phase 1-14, with the
+explicit ground rule that world generation and per-frame flight are
+different performance domains and must not be conflated. Inspected the
+full runtime/generation path first (DroneController, DronePhysics,
+DroneFlightModel, DroneInput, FlightTelemetry, FlightModeController,
+FPVCameraController, CameraSmoothing, CourseGameplayController,
+CheckpointManager, CheckpointTrigger, DroneRecoveryController,
+CourseResultsController, TerrainGenerator, EnvironmentGenerator,
+ObstacleGenerator, LightingGenerator, WeatherGenerator, SpawnResolver,
+PrimitiveWorldPrefabRegistry, WorldSaveService/WorldSaveJsonSerializer,
+WorldGenerationUI, CourseHUD, CourseResultsUI, TelemetryUI/FPVHUD) before
+changing anything.
+
+**Confirmed already correct, left unchanged**: the drone's FixedUpdate
+path (no LINQ, no per-frame GetComponent, no per-frame logging, telemetry
+passed as a value-type struct so no boxing); `CourseGameplayController.
+Tick()`/`DroneRecoveryController.Tick()`/`CheckpointManager`/`RaceTimer`
+(all comparisons/float math, zero per-tick allocations, no polling
+introduced); `WorldGenerationUI`/`CourseResultsUI` (entirely event-driven,
+no `Update()` at all); `WorldSaveService`/`WorldSaveJsonSerializer` (one
+read/write per Save/Load call, no per-frame invocation anywhere — save/
+load was deliberately *not* micro-optimized, per this phase's own
+explicit "correctness and safety remain more important" instruction);
+`ObstacleGenerator`'s auto-layout loop and `WeatherGenerator`/
+`LightingGenerator` (already bounded/O(1) respectively).
+
+**Actual optimizations made**:
+1. `TerrainGenerator.FractalNoise` previously re-accumulated its
+   normalization constant (a fixed value given the always-identical
+   octaves/persistence/lacunarity at its one call site) from scratch on
+   every one of the 129*129 heightmap pixels a single terrain generation
+   samples. Now computed once (a `static readonly` field initializer).
+   Output is bit-for-bit unchanged — verified by the existing
+   `WorldGeneratorTests.Generate_SameSeed_ProducesSameTerrainHeightAtSamePoint`
+   determinism test, which still passes unmodified.
+2. `TelemetryUI` (Mode/Armed/FPS) and `CourseHUD` (race timer) now
+   dirty-check the *underlying value* against what was last displayed
+   before reformatting (string interpolation) and reassigning UI text —
+   these specific fields are either discrete/rarely-changing (Mode/Armed
+   only change on an explicit arm/mode action) or frozen indefinitely for
+   long stretches (the race timer, once Finished), unlike altitude/
+   speed/attitude/checkpoint-progress, which genuinely change on nearly
+   every update during actual flight/racing and were deliberately left
+   reformatting unconditionally (dirty-checking them would rarely skip
+   real work in the case that matters most, for real complexity cost).
+3. New `WorldGenerationLimits.MaxAlternateSpawnPoints` (32) — nothing
+   previously bounded `SpawnSpecification.AlternateSpawnPoints`'s list
+   length, and `SpawnResolver` performs one real `Physics.OverlapSphere`
+   query per entry it tries; an unusually large list (LLM output, or a
+   hand-edited/corrupted Phase 14 save file) could otherwise drive an
+   unbounded number of physics queries during one generation.
+   `WorldSpecificationValidator.ValidateSpawn` trims excess entries,
+   exactly the same `RemoveRange`+`Warning` repair pattern already used
+   for `EnvironmentObjects`/`Obstacles`.
+4. New `WorldGenerationLimits.MaxTotalEnvironmentObjectCount` (10000) —
+   `MaxObjectCountPerCategory` (20000) and `MaxEnvironmentObjectCategories`
+   (64) each already bound one dimension, but their *product* (up to
+   1,280,000 GameObjects) was not itself prevented — a real combinatorial
+   pathological-generation risk. Enforced as a running total inside
+   `EnvironmentGenerator.Generate` (the one place that sees the
+   fully-resolved per-category count for *both* an explicit `Count` and a
+   `Density01`-derived one), not in the validator, which cannot see a
+   density-derived count before generation actually resolves it.
+
+**Determinism**: preserved and re-verified. No change alters what a given
+`WorldSpecification`+seed produces — the terrain fix is mathematically
+identical output computed differently; the two new limits are themselves
+deterministic clamps (same input always trims/caps to the same result,
+no randomness introduced); nothing touches `WorldSeedManager` or any
+generator's `System.Random` usage; `UnityEngine.Random`'s global state
+remains untouched everywhere it already was.
+
+**Untouched, per explicit instruction**: no ECS/DOTS/Jobs/Burst, no
+object pooling, no custom rendering pipeline, no asynchronous generation,
+no multithreaded Unity object creation, no terrain resolution change, no
+Fixed Timestep change, no Rigidbody/flight-model behavior change, no new
+architectural layers, no MonoBehaviour replaced. `CheckpointTrigger.
+OnTriggerEnter`'s `GetComponentInParent<DroneController>()` call was
+specifically inspected and left as-is: it runs once per actual physical
+trigger-enter event (bounded by real gameplay collisions), never
+per-frame, so it is not a hot path despite superficially looking like a
+"repeated GetComponent call."
+
+**Tests**: extended `WorldSpecificationValidatorTests`
+(`AlternateSpawnPoints` trimmed above the limit, left alone within it);
+new `EnvironmentGeneratorTests` (real EditMode tests over a real
+generated `UnityEngine.Terrain` — requested count respected within
+limits; the new total-count cap engages only when the combinatorial case
+actually arises, with list-order allocation confirmed group-by-group;
+same specification+seed reproduces the same total object count). No
+fabricated timing/benchmark assertions anywhere, per this phase's
+explicit instruction — machine-dependent wall-clock timing is never used
+as a correctness assertion. The `TelemetryUI`/`CourseHUD` dirty-check
+changes were not given dedicated automated tests: both are
+tightly-coupled `MonoBehaviour`s driving concrete `TextMeshProUGUI`
+fields with no interface seam, and constructing/asserting against a real
+`TextMeshProUGUI` reliably from EditMode without a live Editor to verify
+against was judged too uncertain to be worth the risk of a misleading
+test — flagged instead as an explicit manual-verification item. All
+EditMode tests here are written, not executed — no Unity Editor is
+available in this environment — see docs/PHASE_15_PERFORMANCE.md
+"Manual Verification" for the full checklist, including what a live
+Editor's Profiler should be used to confirm.
 
 ## Phase 7 detail
 
