@@ -2,6 +2,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using Sim.AI.WorldDesign;
 using Sim.Core;
+using Sim.Gameplay;
 using Sim.Simulation;
 using Sim.WorldGeneration;
 using Sim.WorldGeneration.Validation;
@@ -109,6 +110,67 @@ namespace Sim.Tests.EditMode
             task.GetAwaiter().GetResult();
 
             Assert.AreEqual(0, _spawnTarget.PlaceCount);
+        }
+
+        // --------------------------------------------------------------------------------
+        // Phase 11 — course gameplay binding. MockWorldDesigner's standing example always
+        // includes 15 gates (Course.GateCount = 15, all with CheckpointIndex set), so a
+        // successful GenerateWorldAsync call always produces a real, generated CheckpointManager
+        // to bind to here — no separate fake needed for these tests.
+        // --------------------------------------------------------------------------------
+
+        [Test]
+        public async Task GenerateWorldAsync_Success_BindsCourseToGeneratedCheckpoints()
+        {
+            var course = new CourseGameplayController(_spawnTarget);
+            using var serviceWithCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, course);
+
+            await serviceWithCourse.GenerateWorldAsync("Create a mountain course.");
+
+            Assert.AreEqual(CourseState.Waiting, course.State);
+            Assert.AreEqual(15, course.TotalCheckpoints);
+        }
+
+        [Test]
+        public async Task Regenerate_RebindsCourse_NotDuplicated_OldCheckpointManagerNoLongerAffectsCourse()
+        {
+            var course = new CourseGameplayController(_spawnTarget);
+            using var serviceWithCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, course);
+
+            await serviceWithCourse.GenerateWorldAsync("Create a mountain course.");
+            CheckpointManager firstWorldCheckpoints = _controller.LastGeneratedWorld.CheckpointManager;
+
+            await serviceWithCourse.GenerateWorldAsync("Create a different mountain course."); // regenerate — same course instance, rebound
+
+            Assert.AreEqual(15, course.TotalCheckpoints, "the same CourseGameplayController instance must still report the newly generated course, not stay stuck on the old one or throw away the binding");
+
+            // The old world's CheckpointManager is a stale plain-C# object at this point (its
+            // GameObjects were destroyed by WorldGenerator.Generate()'s own Clear()) — proving
+            // the course no longer reacts to it is what proves the old subscription was dropped.
+            int currentIndexBefore = course.CurrentCheckpointIndex;
+            firstWorldCheckpoints.ReportCheckpointPassed(0);
+            Assert.AreEqual(currentIndexBefore, course.CurrentCheckpointIndex);
+        }
+
+        [Test]
+        public async Task ClearWorld_UnbindsCourse_ReturnsToWaitingWithZeroCheckpoints()
+        {
+            var course = new CourseGameplayController(_spawnTarget);
+            using var serviceWithCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, course);
+
+            await serviceWithCourse.GenerateWorldAsync("Create a mountain course.");
+            serviceWithCourse.ClearWorld();
+
+            Assert.AreEqual(CourseState.Waiting, course.State);
+            Assert.AreEqual(0, course.TotalCheckpoints);
+        }
+
+        [Test]
+        public void NullCourseGameplayController_ReachesReady_DoesNotThrow()
+        {
+            using var serviceWithoutCourse = new WorldGenerationRuntimeService(_controller, _spawnTarget, null);
+            Assert.DoesNotThrowAsync(async () => await serviceWithoutCourse.GenerateWorldAsync("Create a mountain course."));
+            Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
     }
 }

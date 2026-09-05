@@ -23,6 +23,7 @@ check it before assuming a phase needs to start from scratch.
 | 14 | Save/load | ⬜ Not started |
 | 15 | Performance optimization | ⬜ Not started beyond what Phase 8 already applies defensively (limit re-clamping, no per-frame allocation in generation) |
 | 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
+| 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
 
 Numbering has diverged from the original 14-phase brief (the 6.5
 investigation and this phase's architecture pivot both required insertions
@@ -216,9 +217,11 @@ the gap between `Course.GateCount` and explicitly-specified gates along a
 `SpawnResolver.cs` (checks the *actually generated* terrain/colliders —
 `WorldSpecificationValidator` only ever sees numeric values, never a built
 scene) + `SpawnResolutionResult.cs`. `Assets/Scripts/Gameplay/`:
-`CheckpointManager.cs` (plain C# class, race-state only),
+`CheckpointManager.cs` (plain C# class, checkpoint progression only —
+see docs/PHASE_11_COURSE_GAMEPLAY.md for how Phase 11 later split race-flow
+state/timing out of this class into `CourseGameplayController`/`RaceTimer`),
 `CheckpointTrigger.cs` (MonoBehaviour, visual/trigger only — the two stay
-deliberately separate), `RaceState.cs`. `Assets/Scripts/Utilities/`:
+deliberately separate). `Assets/Scripts/Utilities/`:
 `UnityLifecycleUtility.cs` (Destroy vs. DestroyImmediate depending on
 Play/Edit mode — needed because generation code must work correctly from
 both an Editor tool and, eventually, runtime). `Assets/Scripts/Editor/`:
@@ -434,6 +437,92 @@ provider) credentials exist in this environment's `.env.local`/OS
 environment. Stated plainly per this phase's explicit instruction, not
 claimed. See docs/PHASE_10_REAL_LLM.md "Real-provider smoke testing" for
 what running one would involve.
+
+## Phase 11 detail
+
+Turned the generated world into a functional FPV course: checkpoints in
+order, a start countdown, a race timer, finish detection, reset/restart,
+and a HUD — all layered *after* Phase 8's existing `CheckpointManager`/
+`CheckpointTrigger`/`ObstacleGenerator`, not a second implementation of any
+of them. Inspected the full existing pipeline first (`CheckpointManager`,
+`CheckpointTrigger`, `ObstacleGenerator`, `WorldGenerator`,
+`WorldGenerationController`, `WorldGenerationRuntimeService`,
+`RuntimeSimulationBootstrap`, `IDroneSpawnTarget`/`DroneControllerSpawnTarget`,
+`DroneController`, the FPV HUD/formatter classes, `WorldGenerationUI`,
+`WorldGenerationTestTool`) before writing anything — confirmed Phase 8
+already had exactly one `CheckpointManager` and one deterministically
+ordered checkpoint sequence (from `ObstacleGenerationResult.Checkpoints`,
+sorted by `CheckpointDefinition.Index`), so this phase reuses that ordering
+rather than inventing a second one.
+
+**`CheckpointManager.cs` (Sim.Gameplay) — refactored, not replaced.** Its
+Phase 8 version owned both checkpoint progression *and* a lazy-starting
+race-flow state (`RaceState.NotStarted/InProgress/Finished`) and its own
+`ElapsedSeconds` read straight off `Time.time`. That timer started on the
+*first checkpoint pass*, which conflicts with this phase's explicit "timer
+starts when Racing begins" (i.e. at the end of the start countdown, before
+any checkpoint) — keeping both in one class would have meant two
+overlapping, disagreeing state machines. `RaceState.cs` was deleted (grepped
+first — referenced nowhere outside `CheckpointManager` itself); the class
+now only tracks `TotalCheckpoints`/`CurrentCheckpointIndex`/
+`CompletedCheckpoints`/`IsFinished`, still enforces in-order passing, and
+gained one new event: `WrongCheckpointAttempted(attemptedIndex,
+requiredIndex)`, for the brief's optional "wrong checkpoint" HUD feedback.
+
+**New, `Assets/Scripts/Gameplay/`**: `IGameplayClock`/`UnityGameplayClock`
+(the one seam between gameplay code and `UnityEngine.Time`, so nothing
+here sleeps for real seconds in a test); `RaceTimer` (Start/Stop/Reset/
+IsRunning/ElapsedSeconds, driven by `IGameplayClock`); `CourseState`
+(Waiting/Countdown/Racing/Finished/Failed/Resetting — deliberately its own
+enum, never sharing a switch statement with `Sim.Core.WorldGenerationState`);
+`CourseValidator` (the one gameplay-level check
+`WorldSpecificationValidator` cannot do, because it runs before any Unity
+object exists: is the generated `CheckpointManager` non-null and
+non-empty); `CourseGameplayController` (plain C# class, same "not a
+MonoBehaviour" pattern as `WorldGenerationController` — the single
+authoritative owner of race-flow state, constructed once and re-bound to a
+new `CheckpointManager` every regeneration, never recreated, which is what
+guarantees no duplicate gameplay managers ever accumulate).
+
+**New, `Assets/Scripts/UI/`**: `CourseStatusFormatter` (pure formatting,
+same pattern as `TelemetryFormatter`/`WorldGenerationStatusFormatter`) and
+`CourseHUD` (a small panel — course state, `gate N / total`, timer,
+Start/Reset buttons — that complements `FPVHUD`'s existing OSD, never
+replaces it; contains no gameplay logic of its own).
+
+**Extended, not replaced**: `WorldGenerationRuntimeService` gained one more
+optional constructor dependency (`CourseGameplayController`) alongside its
+existing `IDroneSpawnTarget` — on `Ready` it now also binds the course to
+the freshly generated `CheckpointManager`/spawn; on every *other* state
+(including the transient Designing/Validating/Generating a fresh
+`GenerateWorldAsync` call passes through) it unbinds the old course first,
+which is what guarantees a regenerating world never leaves the course
+subscribed to a `CheckpointManager` whose GameObjects are about to be
+destroyed. `RuntimeSimulationBootstrap` constructs the one
+`CourseGameplayController` instance, wires it into that service, wires an
+optional `CourseHUD`, and ticks the controller once per frame (`Course
+GameplayController.Tick()`) purely to notice when a running countdown has
+elapsed — every other transition (bind/unbind, checkpoint pass, finish,
+reset) is event-driven, not polled. `WorldGenerationTestTool`'s runtime
+scene builder gained a second UI canvas (`BuildCourseHudCanvas`) alongside
+the existing prompt UI.
+
+**Untouched, per explicit instruction**: `DronePhysics`/`DroneFlightModel`/
+`FlightModeController` (no flight-model changes at all); `ObstacleGenerator`
+(checkpoint/gate *generation* untouched — this phase only consumes the
+sequence it already produces); Reactor (`Sim.AI`'s Reactor-facing code) —
+grepped for any reference before finishing; no networking, no database, no
+AI opponent/pilot of any kind.
+
+**Tests**: `RaceTimerTests`, `CheckpointManagerTests`,
+`CourseGameplayControllerTests` (state machine, order enforcement, timer
+start/stop/reset, finish detection, bind/unbind/rebind, event-fires-once
+guarantees, order independent of GameObject name/hierarchy), extended
+`WorldGenerationRuntimeServiceTests` (course binds on Ready, rebinds
+without duplication on regeneration, unbinds on Clear), `CourseStatusFormatterTests`.
+All EditMode, all real (no fabricated Play Mode results) — see
+docs/PHASE_11_COURSE_GAMEPLAY.md "Testing" for exactly what is/isn't
+covered and the full manual Unity checklist.
 
 ## Phase 7 detail
 

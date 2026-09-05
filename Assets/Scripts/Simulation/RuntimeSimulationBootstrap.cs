@@ -1,6 +1,7 @@
 using Sim.AI.WorldDesign;
 using Sim.Core;
 using Sim.Drone;
+using Sim.Gameplay;
 using Sim.UI;
 using Sim.WorldGeneration;
 using Sim.WorldGeneration.Validation;
@@ -39,8 +40,14 @@ namespace Sim.Simulation
 
         [SerializeField] private WorldGenerationUI _ui;
 
+        [Tooltip("Optional — Phase 11 course gameplay HUD. World generation and course gameplay both still work if this is left unassigned; only the race HUD display does not.")]
+        [SerializeField] private CourseHUD _courseHud;
+
         /// <summary>Exposed for tests/editor tooling that want to drive the same pipeline this bootstrap wires up, without needing a second copy of this construction logic.</summary>
         public WorldGenerationRuntimeService Service { get; private set; }
+
+        /// <summary>Exposed for tests/editor tooling — Phase 11's race state machine (Waiting/Countdown/Racing/Finished/Failed/Resetting), bound to whatever course the pipeline above last generated.</summary>
+        public CourseGameplayController Course { get; private set; }
 
         private void Awake()
         {
@@ -65,13 +72,27 @@ namespace Sim.Simulation
                     "in the Inspector.");
             }
 
-            Service = new WorldGenerationRuntimeService(controller, spawnTarget);
+            // Same IDroneSpawnTarget the drone-placement path above uses — course reset/restart
+            // goes through the identical DroneController.SetSpawn + ResetToSpawn, never a second
+            // drone-reset implementation.
+            Course = new CourseGameplayController(spawnTarget);
+
+            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course);
 
             if (_ui != null)
                 _ui.Initialize(Service);
             else
                 Debug.LogWarning("[Bootstrap] No WorldGenerationUI assigned — nothing will drive the pipeline until one is wired.");
+
+            if (_courseHud != null)
+                _courseHud.Initialize(Course);
         }
+
+        // Course's only frame-driven concern is noticing when a running countdown has elapsed —
+        // see CourseGameplayController.Tick's own remarks on why this isn't event-driven.
+        // Everything else about it (binding, checkpoint progression, finish) is event-driven,
+        // not polled.
+        private void Update() => Course?.Tick();
 
         private void OnDestroy() => Service?.Dispose();
 

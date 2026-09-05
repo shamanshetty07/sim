@@ -181,10 +181,16 @@ Deliberately split, per this phase's explicit instruction:
   MonoBehaviour) is constructed *after* generation, given the obstacle
   root; it discovers every `CheckpointTrigger` via
   `GetComponentsInChildren` and wires itself in. It owns
-  `TotalCheckpoints`/`CurrentCheckpointIndex`/`CompletedCheckpoints`/
-  `RaceState`, enforces passing checkpoints in order (an out-of-sequence
-  trigger is ignored — standard FPV racing convention), and exposes
-  `CheckpointPassed`/`RaceFinished` events.
+  `TotalCheckpoints`/`CurrentCheckpointIndex`/`CompletedCheckpoints`,
+  enforces passing checkpoints in order (an out-of-sequence trigger is
+  ignored — standard FPV racing convention — and reported via
+  `WrongCheckpointAttempted` rather than silently dropped), and exposes
+  `CheckpointPassed`/`RaceFinished` events. Race-flow state
+  (Waiting/Countdown/Racing/Finished) and the race timer used to live on
+  this class too (Phase 8's `RaceState`/`ElapsedSeconds`) but were pulled
+  out into Phase 11's `Sim.Gameplay.CourseGameplayController`/`RaceTimer` —
+  see docs/PHASE_11_COURSE_GAMEPLAY.md. This class stays scoped to *which*
+  checkpoint is next, nothing about *when* the race started.
 
 ## Spawn resolution
 

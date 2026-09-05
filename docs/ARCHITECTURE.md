@@ -544,8 +544,8 @@ This mirrors the 14-agent breakdown given in the project brief; kept here so
 | 7 | Procedural World Engineer | `Scripts/WorldGeneration/WorldGenerator.cs`, `WorldSeedManager.cs`, `GeneratedWorldResult.cs`, `Spawn/*` (implemented Phase 8) |
 | 8 | Procedural Terrain Engineer | `Scripts/WorldGeneration/Terrain/*` (implemented Phase 8 — Unity `Terrain`, see docs/WORLD_GENERATION.md) |
 | 9 | Environment/Asset Engineer | `Scripts/WorldGeneration/Environment/*` (`EnvironmentGenerator`, `IWorldPrefabRegistry`/`PrimitiveWorldPrefabRegistry` — implemented Phase 8) |
-| 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*`, `Scripts/Gameplay/{CheckpointManager,CheckpointTrigger,RaceState}.cs` (implemented Phase 8) |
-| 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout |
+| 10 | Obstacle/Racing Engineer | `Scripts/WorldGeneration/Obstacles/*` (implemented Phase 8); `Scripts/Gameplay/*` — checkpoint generation glue (`CheckpointManager`, `CheckpointTrigger`, Phase 8) plus course flow/timing (`CourseGameplayController`, `RaceTimer`, `IGameplayClock`, `CourseState`, `CourseValidator`, Phase 11 — see docs/PHASE_11_COURSE_GAMEPLAY.md) |
+| 11 | UI/UX Engineer | `Scripts/UI/GenerationUI.cs`, prompt UI, scene layout; `Scripts/UI/CourseHUD.cs`/`CourseStatusFormatter.cs` (race HUD, Phase 11) |
 | 12 | Performance Engineer | Pooling/LOD/async-generation concerns embedded across §5 |
 | 13 | Persistence Engineer | `Scripts/WorldGeneration/Persistence/*` |
 | 14 | QA Engineer | `Assets/Tests/EditMode/*`, `Assets/Tests/PlayMode/*` |

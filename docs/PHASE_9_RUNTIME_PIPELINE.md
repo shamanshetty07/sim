@@ -247,9 +247,9 @@ committed to source, never logged, never displayed in the UI.
 - No generated-world summary display (object counts, checkpoint count) in
   the UI yet — `GeneratedWorldResult`/`CheckpointManager` already carry
   this data; only the UI-side display is missing.
-- Checkpoint progress (current/total, lap completion) has no UI yet —
-  `CheckpointManager` (Phase 8) already tracks it; wiring it to the OSD or
-  this new UI is unstarted.
+- ~~Checkpoint progress (current/total, lap completion) has no UI yet~~ —
+  addressed Phase 11: `CourseGameplayController` + `CourseHUD`. See
+  docs/PHASE_11_COURSE_GAMEPLAY.md.
 - `WorldGenerationUI`'s Canvas/Button/TMP_InputField construction has not
   been run in a live Unity Editor — see "Manual Unity verification
   checklist" below for what needs confirming by hand, especially whether

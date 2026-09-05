@@ -131,8 +131,9 @@ namespace Sim.EditorTools
             DroneRigBuilder.BuildOsdCanvas(droneController);
 
             WorldGenerationUI ui = BuildWorldGenerationCanvas();
+            CourseHUD courseHud = BuildCourseHudCanvas();
             BuildEventSystem();
-            BuildBootstrap(droneController, ui);
+            BuildBootstrap(droneController, ui, courseHud);
 
             Directory.CreateDirectory(Path.GetDirectoryName(RuntimeScenePath)!);
             bool saved = EditorSceneManager.SaveScene(scene, RuntimeScenePath);
@@ -144,7 +145,7 @@ namespace Sim.EditorTools
                 Debug.LogError($"[WorldGeneration] Failed to save {RuntimeScenePath}.");
         }
 
-        private static RuntimeSimulationBootstrap BuildBootstrap(DroneController drone, WorldGenerationUI ui)
+        private static RuntimeSimulationBootstrap BuildBootstrap(DroneController drone, WorldGenerationUI ui, CourseHUD courseHud)
         {
             var bootstrapGO = new GameObject("Simulation Bootstrap");
             Undo.RegisterCreatedObjectUndo(bootstrapGO, "Create Simulation Bootstrap");
@@ -152,6 +153,7 @@ namespace Sim.EditorTools
 
             DroneRigBuilder.AssignField(bootstrap, "_droneController", drone);
             DroneRigBuilder.AssignField(bootstrap, "_ui", ui);
+            DroneRigBuilder.AssignField(bootstrap, "_courseHud", courseHud);
 
             return bootstrap;
         }
@@ -218,6 +220,75 @@ namespace Sim.EditorTools
             DroneRigBuilder.AssignField(ui, "_statusText", statusText);
 
             return ui;
+        }
+
+        /// <summary>Phase 11 course/race HUD — top-right panel, deliberately separate from the bottom-left World Generation UI and from FPVHUD's own OSD canvas (built by DroneRigBuilder). Complements the FPV telemetry, never replaces it.</summary>
+        private static CourseHUD BuildCourseHudCanvas()
+        {
+            var canvasGO = new GameObject("Course HUD", typeof(RectTransform));
+            Undo.RegisterCreatedObjectUndo(canvasGO, "Create Course HUD");
+
+            var canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            var scaler = canvasGO.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+
+            canvasGO.AddComponent<GraphicRaycaster>();
+
+            var panel = new GameObject("Panel", typeof(RectTransform));
+            panel.transform.SetParent(canvasGO.transform, false);
+            var panelRect = panel.GetComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(1f, 1f);
+            panelRect.anchorMax = new Vector2(1f, 1f);
+            panelRect.pivot = new Vector2(1f, 1f);
+            panelRect.anchoredPosition = new Vector2(-20f, -20f);
+            panelRect.sizeDelta = new Vector2(320f, 0f);
+
+            panel.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.65f);
+
+            var layout = panel.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(16, 16, 16, 16);
+            layout.spacing = 6f;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+
+            var fitter = panel.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            TextMeshProUGUI stateText = CreateLabel(panel.transform, "StateText", "COURSE READY", 20f, 28f);
+            TextMeshProUGUI checkpointText = CreateLabel(panel.transform, "CheckpointText", "-- / --", 32f, 44f);
+            TextMeshProUGUI timerText = CreateLabel(panel.transform, "TimerText", "00:00.00", 26f, 36f);
+            TextMeshProUGUI messageText = CreateLabel(panel.transform, "MessageText", string.Empty, 15f, 22f);
+
+            var buttonRow = new GameObject("ButtonRow", typeof(RectTransform));
+            buttonRow.transform.SetParent(panel.transform, false);
+            buttonRow.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 44f);
+            var buttonLayout = buttonRow.AddComponent<HorizontalLayoutGroup>();
+            buttonLayout.spacing = 8f;
+            buttonLayout.childAlignment = TextAnchor.MiddleCenter;
+            buttonLayout.childControlWidth = false;
+            buttonLayout.childControlHeight = false;
+            buttonLayout.childForceExpandWidth = false;
+            buttonLayout.childForceExpandHeight = false;
+
+            Button startButton = CreateButton(buttonRow.transform, "StartButton", "Start Race");
+            Button resetButton = CreateButton(buttonRow.transform, "ResetButton", "Reset");
+
+            var hud = canvasGO.AddComponent<CourseHUD>();
+            DroneRigBuilder.AssignField(hud, "_stateText", stateText);
+            DroneRigBuilder.AssignField(hud, "_checkpointText", checkpointText);
+            DroneRigBuilder.AssignField(hud, "_timerText", timerText);
+            DroneRigBuilder.AssignField(hud, "_messageText", messageText);
+            DroneRigBuilder.AssignField(hud, "_startButton", startButton);
+            DroneRigBuilder.AssignField(hud, "_resetButton", resetButton);
+
+            return hud;
         }
 
         private static TextMeshProUGUI CreateLabel(Transform parent, string name, string text, float fontSize, float height)
