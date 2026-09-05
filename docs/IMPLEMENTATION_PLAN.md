@@ -22,7 +22,7 @@ check it before assuming a phase needs to start from scratch.
 | 13 | Racing obstacles | ✅ Covered by Phase 8 (`ObstacleGenerator`, `CheckpointManager`) — same note |
 | 14 | Save/load | ✅ Done — `Sim.WorldGeneration.Persistence` (`WorldSaveData`, `IWorldSaveSerializer`/`WorldSaveJsonSerializer`, `WorldSaveValidator`, `IWorldSaveService`/`WorldSaveService`). Persists prompt + seed + `WorldSpecification` + metadata only — never a Unity runtime object graph. `WorldGenerationController` gained `LoadWorld(specification)`, sharing the exact same Validating→Generating→Ready/Failed tail as `GenerateWorldAsync` (extracted into `ValidateAndGenerate`) — Designing/`IWorldDesigner` is structurally never reached on load. `WorldGenerationRuntimeService.SaveWorld()`/`LoadWorld()` are thin forwards; a successful load reaches Ready through the same existing StateChanged handler a fresh generation already uses, so drone spawn/course binding/recovery binding/results all just work. `WorldGenerationUI` gained Save/Load buttons — no persistence logic in the UI. EditMode tests. See docs/PHASE_14_SAVE_LOAD.md. Unverified in a live Editor (none available here). |
 | 15 | Performance optimization | ✅ Done — audited the full runtime/generation path; flight loop, camera, course/recovery tick methods already had no per-frame allocations and were left unchanged. Concrete fixes: `TerrainGenerator.FractalNoise` no longer re-derives its normalization constant per heightmap pixel; `TelemetryUI`/`CourseHUD` dirty-check Mode/Armed/FPS/timer text against their last-displayed value before reformatting; a new `WorldGenerationLimits.MaxAlternateSpawnPoints` bounds `SpawnResolver`'s physics-query loop; a new `WorldGenerationLimits.MaxTotalEnvironmentObjectCount` closes the combinatorial per-category-count-times-category-count gap the existing limits didn't cover. Determinism verified unchanged (same specification+seed → same result). EditMode tests added. See docs/PHASE_15_PERFORMANCE.md — no Unity Profiler available in this environment; static analysis only, documented honestly. |
-| 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
+| 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end. A final verification pass (inventory, static inspection, one coverage-gap fix) ran against Phases 1-15; see docs/PHASE_16_TESTING.md and "Phase 16 detail" below — this row's status is deliberately left "Ongoing," not "Done," since no Unity Editor has run any test in this environment and testing remains a live, continuing concern. |
 | 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
 | 18 | Crash/fall detection & automatic respawn | ✅ Done — `DroneRecoveryController` (Monitoring/RecoveryPending/Recovering/Cooldown, separate from `CourseState`/`WorldGenerationState`), position-vs-world-bounds detection only (no orientation/velocity thresholds — see docs/PHASE_12_RECOVERY.md for why), `WorldRuntimeBounds` (new, `Sim.WorldGeneration`, reuses `TerrainGenerationResult` — no duplicated terrain math), `IDroneStateSource` (new, alongside `IDroneSpawnTarget`, both implemented by the existing `DroneControllerSpawnTarget`). `CheckpointManager` gained `SetSuppressed`/`IsSuppressed`; `CourseGameplayController` gained one passthrough (`SetCheckpointProcessingSuppressed`) — both small, targeted additions, not new systems. EditMode tests. See docs/PHASE_12_RECOVERY.md. Unverified in a live Editor (none available here). |
 | 19 | Course results / race summary | ✅ Done — `CourseResult` (immutable snapshot), `CourseResultsController` (builds it exactly once per `CourseGameplayController.RaceFinished`, clears it reactively off `StateChanged`), `CourseResultsUI`/`CourseResultFormatter` (results panel, delegates time formatting to the existing `CourseStatusFormatter.FormatTimer` — no second timer formatter). `DroneRecoveryController` gained one addition, `RecoveryCountThisRun` (reset on `RaceStarted`/`Bind`/`Unbind`, incremented only on a successful automatic recovery). Restart/New World reuse `CourseGameplayController.Reset()`/`WorldGenerationRuntimeService.ClearWorld()` directly — no second reset or generation pipeline. No persistence of any kind added. EditMode tests. See docs/PHASE_13_COURSE_RESULTS.md. Unverified in a live Editor (none available here). |
@@ -943,6 +943,33 @@ EditMode tests here are written, not executed — no Unity Editor is
 available in this environment — see docs/PHASE_15_PERFORMANCE.md
 "Manual Verification" for the full checklist, including what a live
 Editor's Profiler should be used to confirm.
+
+## Phase 16 detail
+
+A verification-only pass, not feature work: inventoried all 34
+`Assets/Tests/EditMode/*.cs` files (~452 `[Test]`/`[TestCase]` methods,
+zero `Assets/Tests/PlayMode/*` files — a standing gap, not new to this
+phase), built a System → Tests → Coverage → Missing-coverage mapping,
+statically re-inspected Phase 15's dirty-check and generation-limit
+changes for correctness (found correct, no code change needed), and ran
+a repository-wide security regression grep (`TypeNameHandling` usage,
+hardcoded secrets, shell execution, reflection, path-traversal handling,
+`.env.local` gitignore status) — nothing found.
+
+One genuine finding: `WorldSpecificationValidator`'s `Course.GateCount`
+over-limit clamp (the branch beside the already-tested negative-count
+clamp) had no test of its own. Added
+`Validate_ExcessiveGateCount_ClampsToObstacleLimit` to
+`WorldSpecificationValidatorTests.cs`, matching the file's existing
+style — the validator's own logic was already correct and was not
+changed.
+
+No Unity Editor, Test Runner, or C# compiler is available in this
+environment, so nothing was actually compiled or run; every claim in
+docs/PHASE_16_TESTING.md is either static analysis or an explicit manual
+Unity Editor checklist item still pending real execution. Testing
+remains "Ongoing" per row 16 above — this phase did not, and could not,
+mark the project as fully verified.
 
 ## Phase 7 detail
 

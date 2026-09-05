@@ -314,6 +314,22 @@ namespace Sim.Tests.EditMode
         }
 
         [Test]
+        public void Validate_ExcessiveGateCount_ClampsToObstacleLimit()
+        {
+            // Phase 16: the validator's over-limit clamp (WorldSpecificationValidator.cs, the
+            // "else if" branch beside Validate_NegativeGateCount_ClampsToZero's branch above) had
+            // no test of its own before this phase — found while inventorying test coverage
+            // against the brief's "invalid course configuration" requirement.
+            var spec = ValidSpec();
+            spec.Course.GateCount = WorldGenerationLimits.MaxObstacleCount + 500;
+
+            ValidationResult result = _validator.Validate(spec);
+
+            Assert.AreEqual(WorldGenerationLimits.MaxObstacleCount, result.RepairedSpecification.Course.GateCount);
+            Assert.IsTrue(result.Errors.Exists(e => e.Field == "Course.GateCount" && e.Severity == ValidationSeverity.Warning));
+        }
+
+        [Test]
         public void Validate_RichCourseIntent_SurvivesValidationUnchanged()
         {
             var spec = ValidSpec();
