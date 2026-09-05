@@ -487,3 +487,9 @@ Reviewed for the brief's explicit concerns:
 - Configurable recovery tuning exposed per-generated-world (e.g. a tight
   technical course wanting a smaller `RecoveryMargin`) rather than one
   global `DroneRecoveryConfig` for the whole session.
+
+**Update, Phase 13:** `DroneRecoveryController` gained a per-run
+`RecoveryCountThisRun` counter (reset on `RaceStarted`/`Bind`/`Unbind`,
+incremented only on a successful recovery) so the new results panel can
+report how many automatic recoveries happened during a completed run —
+see docs/PHASE_13_COURSE_RESULTS.md §5.

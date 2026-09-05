@@ -23,7 +23,10 @@ telemetry (see `docs/PHASE_11_COURSE_GAMEPLAY.md`). A drone that flies out
 of the generated world's bounds (or falls below it) is now automatically
 recovered back to its spawn — detected from position vs. world bounds
 only, never from rotation/speed, so it never interferes with legitimate
-Acro/Horizon flight (see `docs/PHASE_12_RECOVERY.md`). See
+Acro/Horizon flight (see `docs/PHASE_12_RECOVERY.md`). Finishing a course
+now shows a results panel (final time, gates, recoveries) with Restart
+(same world) and New World actions — a session-only snapshot, no
+save/load or leaderboards (see `docs/PHASE_13_COURSE_RESULTS.md`). See
 `docs/IMPLEMENTATION_PLAN.md` for phase-by-phase progress and
 `docs/ARCHITECTURE.md` for the system design.
 
@@ -51,6 +54,7 @@ Acro/Horizon flight (see `docs/PHASE_12_RECOVERY.md`). See
 - `docs/PHASE_10_REAL_LLM.md` — the real Anthropic LLM integration: structured output, configuration, security, testing
 - `docs/PHASE_11_COURSE_GAMEPLAY.md` — course gameplay: checkpoints/ordering, race timer, start countdown, finish, reset/restart, HUD
 - `docs/PHASE_12_RECOVERY.md` — automatic crash/fall detection and respawn: world-bounds detection, why orientation/velocity aren't used, checkpoint/timer preservation
+- `docs/PHASE_13_COURSE_RESULTS.md` — course results/race summary: result snapshot, time formatting, recovery counting, restart vs. new world, persistence boundary
 - `docs/WORLD_GENERATION.md` — Phase 8 Unity-side world construction (terrain, environment, obstacles, checkpoints)
 - `docs/AI_WORLD_DESIGNER.md` — Phase 7 AI world-design pipeline (current, authoritative)
 - `docs/WORLD_SPECIFICATION.md` — prompt -> OpenWorld Reactor -> adapter -> WorldSpecification pipeline (Phase 5, historical framing)

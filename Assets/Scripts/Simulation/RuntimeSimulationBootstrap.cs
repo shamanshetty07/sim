@@ -46,6 +46,9 @@ namespace Sim.Simulation
         [Tooltip("Phase 12 automatic crash/fall recovery tuning. Sensible defaults — see DroneRecoveryConfig.")]
         [SerializeField] private DroneRecoveryConfig _recoveryConfig = new DroneRecoveryConfig();
 
+        [Tooltip("Optional — Phase 13 course results/summary panel. World generation and course gameplay both still work if this is left unassigned; only the results display does not.")]
+        [SerializeField] private CourseResultsUI _courseResultsUi;
+
         /// <summary>Exposed for tests/editor tooling that want to drive the same pipeline this bootstrap wires up, without needing a second copy of this construction logic.</summary>
         public WorldGenerationRuntimeService Service { get; private set; }
 
@@ -54,6 +57,9 @@ namespace Sim.Simulation
 
         /// <summary>Exposed for tests/editor tooling — Phase 12's automatic crash/fall recovery, bound to whatever world the pipeline above last generated.</summary>
         public DroneRecoveryController Recovery { get; private set; }
+
+        /// <summary>Exposed for tests/editor tooling — Phase 13's completed-run snapshotting, bound to the same Course/Recovery instances above for the lifetime of the session.</summary>
+        public CourseResultsController Results { get; private set; }
 
         private void Awake()
         {
@@ -91,7 +97,11 @@ namespace Sim.Simulation
             var stateSource = spawnTarget as IDroneStateSource;
             Recovery = new DroneRecoveryController(spawnTarget, stateSource, Course, _recoveryConfig);
 
-            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course, Recovery);
+            // Consumes Course/Recovery, never the other way around — matches this phase's
+            // "Results is a consumer of course gameplay state" architectural principle.
+            Results = new CourseResultsController(Course, Recovery);
+
+            Service = new WorldGenerationRuntimeService(controller, spawnTarget, Course, Recovery, Results);
 
             if (_ui != null)
                 _ui.Initialize(Service);
@@ -103,6 +113,9 @@ namespace Sim.Simulation
                 _courseHud.Initialize(Course);
                 _courseHud.BindRecovery(Recovery);
             }
+
+            if (_courseResultsUi != null)
+                _courseResultsUi.Initialize(Course, Results, Service);
         }
 
         // Course's only frame-driven concern is noticing when a running countdown has elapsed;

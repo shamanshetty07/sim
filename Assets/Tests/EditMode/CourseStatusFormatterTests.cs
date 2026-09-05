@@ -69,6 +69,26 @@ namespace Sim.Tests.EditMode
             Assert.AreEqual("01:00.00", CourseStatusFormatter.FormatTimer(59.997f));
 
         [Test]
+        public void FormatTimer_OverOneHour_MinutesDoNotWrap() =>
+            Assert.AreEqual("61:01.25", CourseStatusFormatter.FormatTimer(3661.25f));
+
+        [Test]
+        public void FormatTimer_NaN_ReturnsSafeFallback() =>
+            Assert.AreEqual("--:--.--", CourseStatusFormatter.FormatTimer(float.NaN));
+
+        [Test]
+        public void FormatTimer_PositiveInfinity_ReturnsSafeFallback() =>
+            Assert.AreEqual("--:--.--", CourseStatusFormatter.FormatTimer(float.PositiveInfinity));
+
+        [Test]
+        public void FormatTimer_NegativeInfinity_ReturnsSafeFallback() =>
+            Assert.AreEqual("--:--.--", CourseStatusFormatter.FormatTimer(float.NegativeInfinity));
+
+        [Test]
+        public void FormatTimer_Negative_ReturnsSafeFallback() =>
+            Assert.AreEqual("--:--.--", CourseStatusFormatter.FormatTimer(-1f));
+
+        [Test]
         public void IsStartAvailable_OnlyWhenWaiting()
         {
             Assert.IsTrue(CourseStatusFormatter.IsStartAvailable(CourseState.Waiting));

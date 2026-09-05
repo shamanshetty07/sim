@@ -43,10 +43,21 @@ namespace Sim.UI
         /// <summary>"Checkpoint N required" — shown briefly after an out-of-order checkpoint attempt.</summary>
         public static string FormatWrongCheckpoint(int requiredIndex) => $"Checkpoint {requiredIndex + 1} required";
 
-        /// <summary>mm:ss.ff, e.g. "00:24.81" — matches the format used throughout this phase's spec/docs. Rounds to whole centiseconds first, then splits, so 59.997s displays as "01:00.00" rather than rolling over to an invalid "00:60.00".</summary>
+        /// <summary>
+        /// mm:ss.ff, e.g. "00:24.81" — matches the format used throughout this phase's spec/
+        /// docs. Rounds to whole centiseconds first, then splits, so 59.997s displays as
+        /// "01:00.00" rather than rolling over to an invalid "00:60.00". Minutes are never
+        /// wrapped — 3661.25s correctly displays as "61:01.25", not "01:01.25". NaN/Infinity/
+        /// negative values (never legitimate elapsed time) return "--:--.--" rather than
+        /// propagating garbage into the UI or crashing on the cast to int — added Phase 13 for
+        /// the results panel, and applies here too since the live HUD calls this same method.
+        /// </summary>
         public static string FormatTimer(float elapsedSeconds)
         {
-            int totalCentiseconds = Mathf.RoundToInt(Mathf.Max(0f, elapsedSeconds) * 100f);
+            if (float.IsNaN(elapsedSeconds) || float.IsInfinity(elapsedSeconds) || elapsedSeconds < 0f)
+                return "--:--.--";
+
+            int totalCentiseconds = Mathf.RoundToInt(elapsedSeconds * 100f);
             int minutes = totalCentiseconds / 6000;
             int seconds = (totalCentiseconds / 100) % 60;
             int centiseconds = totalCentiseconds % 100;

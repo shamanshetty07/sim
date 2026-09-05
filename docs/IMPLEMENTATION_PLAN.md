@@ -25,6 +25,7 @@ check it before assuming a phase needs to start from scratch.
 | 16 | Testing | ⬜ Ongoing — add tests as each system lands, not deferred to the end |
 | 17 | FPV course gameplay: checkpoints, timing, race HUD | ✅ Done — `CourseGameplayController` (Waiting/Countdown/Racing/Finished/Failed/Resetting, separate from `WorldGenerationState`), `RaceTimer`/`IGameplayClock` (testable, no `Time.time` scattered across gameplay code), `CourseHUD`/`CourseStatusFormatter`. `CheckpointManager` refactored (race-flow/timer responsibility moved out, `WrongCheckpointAttempted` added) — same class, not replaced. EditMode tests. See docs/PHASE_11_COURSE_GAMEPLAY.md. Unverified in a live Editor (none available here). |
 | 18 | Crash/fall detection & automatic respawn | ✅ Done — `DroneRecoveryController` (Monitoring/RecoveryPending/Recovering/Cooldown, separate from `CourseState`/`WorldGenerationState`), position-vs-world-bounds detection only (no orientation/velocity thresholds — see docs/PHASE_12_RECOVERY.md for why), `WorldRuntimeBounds` (new, `Sim.WorldGeneration`, reuses `TerrainGenerationResult` — no duplicated terrain math), `IDroneStateSource` (new, alongside `IDroneSpawnTarget`, both implemented by the existing `DroneControllerSpawnTarget`). `CheckpointManager` gained `SetSuppressed`/`IsSuppressed`; `CourseGameplayController` gained one passthrough (`SetCheckpointProcessingSuppressed`) — both small, targeted additions, not new systems. EditMode tests. See docs/PHASE_12_RECOVERY.md. Unverified in a live Editor (none available here). |
+| 19 | Course results / race summary | ✅ Done — `CourseResult` (immutable snapshot), `CourseResultsController` (builds it exactly once per `CourseGameplayController.RaceFinished`, clears it reactively off `StateChanged`), `CourseResultsUI`/`CourseResultFormatter` (results panel, delegates time formatting to the existing `CourseStatusFormatter.FormatTimer` — no second timer formatter). `DroneRecoveryController` gained one addition, `RecoveryCountThisRun` (reset on `RaceStarted`/`Bind`/`Unbind`, incremented only on a successful automatic recovery). Restart/New World reuse `CourseGameplayController.Reset()`/`WorldGenerationRuntimeService.ClearWorld()` directly — no second reset or generation pipeline. No persistence of any kind added. EditMode tests. See docs/PHASE_13_COURSE_RESULTS.md. Unverified in a live Editor (none available here). |
 
 Numbering has diverged from the original 14-phase brief (the 6.5
 investigation and this phase's architecture pivot both required insertions
@@ -634,6 +635,112 @@ rebinds without duplication on regeneration, unbinds on Clear). All
 EditMode, all real (no fabricated Play Mode results) — see
 docs/PHASE_12_RECOVERY.md "Testing" for exactly what is/isn't covered and
 the full manual Unity checklist.
+
+## Phase 13 detail
+
+Course results/race summary, consuming Phase 11/12 course gameplay state
+without duplicating any of it. Inspected the full existing stack first
+(CourseGameplayController, CourseState, RaceTimer, CheckpointManager,
+CourseHUD, CourseStatusFormatter, WorldGenerationRuntimeService,
+WorldGenerationController, WorldGenerationUI, RuntimeSimulationBootstrap,
+IDroneSpawnTarget/DroneControllerSpawnTarget, DroneController,
+DroneRecoveryController, WorldSpecification/CourseSpecification,
+GeneratedWorldResult, the Editor tooling) before writing anything —
+confirmed CourseGameplayController.RaceFinished was already the single
+authoritative finish event and already guaranteed to fire exactly once
+per completed run (Phase 11), so this phase adds no second finish
+detector, no second timer, and no second checkpoint manager.
+
+Architectural principle, explicit in the brief: Results is a *consumer*
+of course gameplay state, never a calculator of it — the UI must not
+compute time/checkpoints/recovery counts itself. CourseResultsController
+reads only already-existing public state (CourseGameplayController.
+ElapsedSeconds/CurrentCheckpointIndex/TotalCheckpoints,
+DroneRecoveryController.RecoveryCountThisRun) at the exact instant
+RaceFinished fires, and does no calculation of its own beyond copying
+those values into an immutable CourseResult.
+
+New, Assets/Scripts/Gameplay/: CourseResult (immutable — six get-only
+properties, one constructor, no mutable gameplay state);
+CourseResultsController (plain C# class, same "constructed once, never
+recreated" pattern as CourseGameplayController/DroneRecoveryController —
+subscribes to CourseGameplayController.RaceFinished to build a result and
+to StateChanged to clear LastResult whenever state becomes anything
+other than Finished, covering restart/regeneration/Clear World with one
+rule and no extra wiring).
+
+New, Assets/Scripts/UI/: CourseResultFormatter (pure formatting —
+FormatFinalTime delegates straight to the existing CourseStatusFormatter.
+FormatTimer, no second time-formatting implementation); CourseResultsUI
+(a dedicated center-screen results panel, coexisting with — not
+replacing — CourseHUD; visibility is a pure function of
+CourseGameplayController.State; Restart/New World buttons are thin
+forwarding calls onto pre-existing methods, see below).
+
+Small, targeted addition to an existing class (not a new system):
+DroneRecoveryController gained one new public property,
+RecoveryCountThisRun — incremented only in the success path of
+BeginRecovery (never on a failed recovery, never by manual reset or
+initial spawn placement, since neither of those code paths touches
+BeginRecovery at all), reset to 0 on CourseGameplayController.RaceStarted
+(the one event subscription this class holds — reactively resetting its
+own counter, not "writing course state") and defensively again on
+Bind()/Unbind().
+
+Extended, not replaced: CourseStatusFormatter.FormatTimer gained a
+NaN/Infinity/negative-value safety guard ("--:--.--") — benefits the
+live Course HUD too, not just results, since both call the same method.
+WorldGenerationRuntimeService gained one more optional constructor
+dependency (CourseResultsController) — given only the generated world's
+seed on Ready (SetWorldSeed); no explicit bind/unbind call is needed for
+it at all, since it already clears itself reactively off
+CourseGameplayController's existing events. RuntimeSimulationBootstrap
+constructs the one CourseResultsController instance and wires it into
+that service and the optional CourseResultsUI. WorldGenerationTestTool's
+runtime scene builder gained a third UI canvas (BuildCourseResultsCanvas)
+alongside the existing prompt UI and Course HUD.
+
+Restart and New World reuse existing methods directly, nothing new:
+Restart calls CourseGameplayController.Reset() (the exact same Phase 11
+method CourseHUD's own Reset button already calls) — does not call
+WorldGenerator.Generate(), regenerate terrain, or touch
+WorldGenerationController at all. New World calls
+WorldGenerationRuntimeService.ClearWorld() (the exact same method
+WorldGenerationUI's own Clear button already calls) — implements no
+second generation pipeline; WorldGenerationUI was already visible the
+whole time and the user must still explicitly click Generate themselves
+(no LLM call is spent merely by clicking New World).
+
+Untouched, per explicit instruction: DronePhysics/DroneFlightModel/
+FlightModeController (no flight-model changes at all);
+CheckpointManager's/CourseGameplayController's core progression and
+state-machine logic (only read, via already-public members); Reactor —
+grepped for any reference before finishing; no save/load, no
+leaderboards, no persistence infrastructure of any kind, no networking,
+no AI opponent.
+
+Tests: CourseResultTests (every constructor argument lands unchanged;
+every property get-only, a reflection-based regression guard against a
+future accidental setter); CourseResultsControllerTests (final time
+captured and frozen at the finish instant despite the clock continuing
+to move; checkpoint counts captured; recovery count captured end-to-end
+through a real DroneRecoveryController — including letting Cooldown
+elapse before finishing, since checkpoint processing stays suppressed
+through that window; recovery count starts at 0, is untouched by manual
+reset/initial-bind, and resets on a fresh RaceStarted; ResultsReady fires
+exactly once per finish and a duplicate finish report does not produce a
+second result; LastResult clears on Restart/Unbind/rebind and a second
+finish produces a genuinely distinct instance; SetWorldSeed is carried
+into the next result); extended CourseStatusFormatterTests
+(over-one-hour, NaN/Infinity/negative fallback); CourseResultFormatterTests
+(every example value the brief specifies, plus the same safety fallback,
+completion-count, and recovery-count formatting); extended
+WorldGenerationRuntimeServiceTests (the real generated seed is carried
+into the next result, over the real Mock → WorldGenerator pipeline; a
+null CourseResultsController doesn't break reaching Ready). All EditMode,
+all real (no fabricated Play Mode results) — see
+docs/PHASE_13_COURSE_RESULTS.md "Testing" for exactly what is/isn't
+covered and the full manual Unity checklist.
 
 ## Phase 7 detail
 

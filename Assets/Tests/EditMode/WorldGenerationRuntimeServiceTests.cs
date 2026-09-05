@@ -228,5 +228,39 @@ namespace Sim.Tests.EditMode
             Assert.DoesNotThrowAsync(async () => await serviceWithoutRecovery.GenerateWorldAsync("Create a mountain course."));
             Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
         }
+
+        // --------------------------------------------------------------------------------
+        // Phase 13 — results snapshotting binding (the world seed), over the same real
+        // Mock -> WorldGenerator pipeline.
+        // --------------------------------------------------------------------------------
+
+        [Test]
+        public async Task GenerateWorldAsync_Success_CarriesGeneratedSeedIntoNextResult()
+        {
+            var course = new CourseGameplayController(_spawnTarget);
+            var results = new CourseResultsController(course);
+            using var serviceWithResults = new WorldGenerationRuntimeService(_controller, _spawnTarget, course, null, results);
+
+            await serviceWithResults.GenerateWorldAsync("Create a mountain course.");
+
+            int generatedSeed = _controller.LastValidSpecification.Seed;
+
+            // Finish the real generated course (15 gates, MockWorldDesigner's standing example)
+            // to actually produce a result and confirm the seed made it all the way through.
+            // CheckpointManager.RaceFinished fires regardless of CourseGameplayController's own
+            // Waiting/Countdown/Racing state, so reporting the passes directly is sufficient.
+            for (int i = 0; i < 15; i++)
+                _controller.LastGeneratedWorld.CheckpointManager.ReportCheckpointPassed(i);
+
+            Assert.AreEqual(generatedSeed, results.LastResult.WorldSeed);
+        }
+
+        [Test]
+        public void NullCourseResultsController_ReachesReady_DoesNotThrow()
+        {
+            using var serviceWithoutResults = new WorldGenerationRuntimeService(_controller, _spawnTarget, null, null, null);
+            Assert.DoesNotThrowAsync(async () => await serviceWithoutResults.GenerateWorldAsync("Create a mountain course."));
+            Assert.AreEqual(WorldGenerationState.Ready, _controller.State);
+        }
     }
 }

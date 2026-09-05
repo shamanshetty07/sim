@@ -132,8 +132,9 @@ namespace Sim.EditorTools
 
             WorldGenerationUI ui = BuildWorldGenerationCanvas();
             CourseHUD courseHud = BuildCourseHudCanvas();
+            CourseResultsUI resultsUi = BuildCourseResultsCanvas();
             BuildEventSystem();
-            BuildBootstrap(droneController, ui, courseHud);
+            BuildBootstrap(droneController, ui, courseHud, resultsUi);
 
             Directory.CreateDirectory(Path.GetDirectoryName(RuntimeScenePath)!);
             bool saved = EditorSceneManager.SaveScene(scene, RuntimeScenePath);
@@ -145,7 +146,7 @@ namespace Sim.EditorTools
                 Debug.LogError($"[WorldGeneration] Failed to save {RuntimeScenePath}.");
         }
 
-        private static RuntimeSimulationBootstrap BuildBootstrap(DroneController drone, WorldGenerationUI ui, CourseHUD courseHud)
+        private static RuntimeSimulationBootstrap BuildBootstrap(DroneController drone, WorldGenerationUI ui, CourseHUD courseHud, CourseResultsUI resultsUi)
         {
             var bootstrapGO = new GameObject("Simulation Bootstrap");
             Undo.RegisterCreatedObjectUndo(bootstrapGO, "Create Simulation Bootstrap");
@@ -154,6 +155,7 @@ namespace Sim.EditorTools
             DroneRigBuilder.AssignField(bootstrap, "_droneController", drone);
             DroneRigBuilder.AssignField(bootstrap, "_ui", ui);
             DroneRigBuilder.AssignField(bootstrap, "_courseHud", courseHud);
+            DroneRigBuilder.AssignField(bootstrap, "_courseResultsUi", resultsUi);
 
             return bootstrap;
         }
@@ -289,6 +291,80 @@ namespace Sim.EditorTools
             DroneRigBuilder.AssignField(hud, "_resetButton", resetButton);
 
             return hud;
+        }
+
+        /// <summary>Phase 13 results/summary panel — center-screen, coexists with (never replaces) the Course HUD/FPV OSD. Hidden by default (CourseResultsUI.Awake() also enforces this at runtime regardless of the saved scene's initial state); visible only while CourseState == Finished.</summary>
+        private static CourseResultsUI BuildCourseResultsCanvas()
+        {
+            var canvasGO = new GameObject("Course Results UI", typeof(RectTransform));
+            Undo.RegisterCreatedObjectUndo(canvasGO, "Create Course Results UI");
+
+            var canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            var scaler = canvasGO.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+
+            canvasGO.AddComponent<GraphicRaycaster>();
+
+            var panel = new GameObject("Panel", typeof(RectTransform));
+            panel.transform.SetParent(canvasGO.transform, false);
+            var panelRect = panel.GetComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(0.5f, 0.5f);
+            panelRect.anchorMax = new Vector2(0.5f, 0.5f);
+            panelRect.pivot = new Vector2(0.5f, 0.5f);
+            panelRect.anchoredPosition = Vector2.zero;
+            panelRect.sizeDelta = new Vector2(480f, 0f);
+
+            panel.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.85f);
+
+            var layout = panel.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(24, 24, 24, 24);
+            layout.spacing = 10f;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+
+            var fitter = panel.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            CreateLabel(panel.transform, "TitleText", "COURSE COMPLETE", 30f, 40f);
+            CreateLabel(panel.transform, "FinalTimeLabel", "FINAL TIME", 14f, 20f);
+            TextMeshProUGUI finalTimeText = CreateLabel(panel.transform, "FinalTimeText", "00:00.00", 34f, 44f);
+            CreateLabel(panel.transform, "GatesLabel", "GATES", 14f, 20f);
+            TextMeshProUGUI gatesText = CreateLabel(panel.transform, "GatesText", "0 / 0", 24f, 32f);
+            CreateLabel(panel.transform, "RecoveriesLabel", "RECOVERIES", 14f, 20f);
+            TextMeshProUGUI recoveriesText = CreateLabel(panel.transform, "RecoveriesText", "0", 24f, 32f);
+
+            var buttonRow = new GameObject("ButtonRow", typeof(RectTransform));
+            buttonRow.transform.SetParent(panel.transform, false);
+            buttonRow.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 44f);
+            var buttonLayout = buttonRow.AddComponent<HorizontalLayoutGroup>();
+            buttonLayout.spacing = 12f;
+            buttonLayout.childAlignment = TextAnchor.MiddleCenter;
+            buttonLayout.childControlWidth = false;
+            buttonLayout.childControlHeight = false;
+            buttonLayout.childForceExpandWidth = false;
+            buttonLayout.childForceExpandHeight = false;
+
+            Button restartButton = CreateButton(buttonRow.transform, "RestartButton", "Restart");
+            Button newWorldButton = CreateButton(buttonRow.transform, "NewWorldButton", "New World");
+
+            var resultsUi = canvasGO.AddComponent<CourseResultsUI>();
+            DroneRigBuilder.AssignField(resultsUi, "_panelRoot", panel);
+            DroneRigBuilder.AssignField(resultsUi, "_finalTimeText", finalTimeText);
+            DroneRigBuilder.AssignField(resultsUi, "_gatesText", gatesText);
+            DroneRigBuilder.AssignField(resultsUi, "_recoveriesText", recoveriesText);
+            DroneRigBuilder.AssignField(resultsUi, "_restartButton", restartButton);
+            DroneRigBuilder.AssignField(resultsUi, "_newWorldButton", newWorldButton);
+
+            panel.SetActive(false); // cosmetic for the saved scene file only — CourseResultsUI.Awake() enforces this at runtime regardless
+
+            return resultsUi;
         }
 
         private static TextMeshProUGUI CreateLabel(Transform parent, string name, string text, float fontSize, float height)

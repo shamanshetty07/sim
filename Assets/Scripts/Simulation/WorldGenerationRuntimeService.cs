@@ -10,19 +10,21 @@ namespace Sim.Simulation
 {
     /// <summary>
     /// The thin bridge between WorldGenerationController (prompt -&gt; design -&gt; validate ->
-    /// generate, Sim.Core — no knowledge of the drone, course gameplay, or recovery) and the
-    /// things that need to react once a world is actually ready: the drone (via
-    /// IDroneSpawnTarget), Phase 11's course gameplay (via CourseGameplayController), and Phase
-    /// 12's crash/fall recovery (via DroneRecoveryController). This is what a UI actually calls,
-    /// not WorldGenerationController directly — but it does not duplicate or shadow the
-    /// controller's state machine: <see cref="Controller"/> exposes it directly, and this
-    /// class's own job stays exactly "react to Ready/not-Ready," never re-implementing design/
-    /// validate/generate. Keeping this as a separate, small class rather than folding
-    /// drone-placement/course-binding/recovery-binding into WorldGenerationController itself
-    /// preserves that controller's existing "no reference to Sim.Drone" boundary (matching
-    /// WorldGenerator's own "world construction and drone control stay cleanly separate" rule
-    /// from Phase 8) — it is also the one place in the runtime layer allowed to know about all
-    /// four.
+    /// generate, Sim.Core — no knowledge of the drone, course gameplay, recovery, or results) and
+    /// the things that need to react once a world is actually ready: the drone (via
+    /// IDroneSpawnTarget), Phase 11's course gameplay (via CourseGameplayController), Phase 12's
+    /// crash/fall recovery (via DroneRecoveryController), and Phase 13's results snapshotting
+    /// (via CourseResultsController — only ever given the generated world's seed; it clears its
+    /// own stored result reactively off CourseGameplayController's events, needing no explicit
+    /// bind/unbind call here). This is what a UI actually calls, not WorldGenerationController
+    /// directly — but it does not duplicate or shadow the controller's state machine:
+    /// <see cref="Controller"/> exposes it directly, and this class's own job stays exactly
+    /// "react to Ready/not-Ready," never re-implementing design/validate/generate. Keeping this
+    /// as a separate, small class rather than folding drone-placement/course-binding/recovery-
+    /// binding into WorldGenerationController itself preserves that controller's existing "no
+    /// reference to Sim.Drone" boundary (matching WorldGenerator's own "world construction and
+    /// drone control stay cleanly separate" rule from Phase 8) — it is also the one place in the
+    /// runtime layer allowed to know about all of them.
     /// </summary>
     public sealed class WorldGenerationRuntimeService : IDisposable
     {
@@ -30,6 +32,7 @@ namespace Sim.Simulation
         private readonly IDroneSpawnTarget _droneSpawnTarget;
         private readonly CourseGameplayController _courseGameplayController;
         private readonly DroneRecoveryController _droneRecoveryController;
+        private readonly CourseResultsController _courseResultsController;
 
         /// <summary>The single source of truth for pipeline state — a UI reads State/StateChanged/LastErrorMessage from here, not from this service.</summary>
         public WorldGenerationController Controller => _controller;
@@ -38,20 +41,23 @@ namespace Sim.Simulation
         /// <paramref name="droneSpawnTarget"/> may be null (e.g. Editor tooling generating a
         /// world with no drone in the scene) — in that case Ready is reached normally, just
         /// without a drone being placed (logged once as a warning, not a silent no-op).
-        /// <paramref name="courseGameplayController"/> and <paramref name="droneRecoveryController"/>
-        /// may likewise be null (e.g. Editor tooling with no course gameplay in play) — Ready
-        /// still places the drone normally, just without any course/recovery being bound.
+        /// <paramref name="courseGameplayController"/>, <paramref name="droneRecoveryController"/>,
+        /// and <paramref name="courseResultsController"/> may likewise be null (e.g. Editor
+        /// tooling with no course gameplay in play) — Ready still places the drone normally, just
+        /// without any course/recovery/results being bound.
         /// </summary>
         public WorldGenerationRuntimeService(
             WorldGenerationController controller,
             IDroneSpawnTarget droneSpawnTarget,
             CourseGameplayController courseGameplayController = null,
-            DroneRecoveryController droneRecoveryController = null)
+            DroneRecoveryController droneRecoveryController = null,
+            CourseResultsController courseResultsController = null)
         {
             _controller = controller ?? throw new ArgumentNullException(nameof(controller));
             _droneSpawnTarget = droneSpawnTarget;
             _courseGameplayController = courseGameplayController;
             _droneRecoveryController = droneRecoveryController;
+            _courseResultsController = courseResultsController;
             _controller.StateChanged += HandleStateChanged;
         }
 
@@ -88,6 +94,12 @@ namespace Sim.Simulation
 
             _courseGameplayController?.BindToCourse(result.CheckpointManager, result.SpawnPosition, result.SpawnRotation);
             _droneRecoveryController?.Bind(result.Bounds, result.SpawnPosition, result.SpawnRotation);
+
+            // CourseResultsController needs no explicit bind/unbind call of its own — it clears
+            // its stored result reactively off CourseGameplayController.StateChanged (see its own
+            // remarks), which BindToCourse/Unbind above already drive. The seed is the one piece
+            // of per-generation data it cannot get from CourseGameplayController itself.
+            _courseResultsController?.SetWorldSeed(_controller.LastValidSpecification?.Seed ?? 0);
 
             Debug.Log($"[WorldGeneration] Drone placed at generated spawn {result.SpawnPosition}.");
         }

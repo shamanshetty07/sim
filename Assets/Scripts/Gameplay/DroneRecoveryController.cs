@@ -24,7 +24,9 @@ namespace Sim.Gameplay
     /// never touched), world generation, checkpoint ordering (CheckpointManager still owns
     /// that; this only ever calls its narrow SetSuppressed passthrough via
     /// CourseGameplayController), or race-flow state (CourseGameplayController's State is only
-    /// ever read, never written, by this class).
+    /// ever read, never written, by this class) — the one exception being
+    /// <see cref="RecoveryCountThisRun"/> (Phase 13), which this class resets purely by
+    /// *reacting* to CourseGameplayController.RaceStarted, never by writing course state itself.
     /// </summary>
     public sealed class DroneRecoveryController
     {
@@ -45,6 +47,15 @@ namespace Sim.Gameplay
 
         /// <summary>True once a world's bounds/spawn have been bound (and not since Unbind()) — exposed for tests/observability, not consumed by any decision inside this class.</summary>
         public bool IsBound => _bounds != null;
+
+        /// <summary>
+        /// Phase 13: count of successful automatic recoveries during the *current* run only —
+        /// manual Reset, initial spawn placement, and world regeneration never touch this (none
+        /// of those go through BeginRecovery at all). Reset to 0 whenever CourseGameplayController
+        /// raises RaceStarted (a fresh race is beginning) and defensively on Bind()/Unbind() too,
+        /// so a stale count from an abandoned run can never leak into a later one.
+        /// </summary>
+        public int RecoveryCountThisRun { get; private set; }
 
         /// <summary>Raised the instant a recovery begins (before the drone is actually moved) — carries a human-readable reason ("non-finite position", "crossed recovery boundary", etc.).</summary>
         public event Action<string> RecoveryStarted;
@@ -67,7 +78,16 @@ namespace Sim.Gameplay
             _course = course;
             _config = config ?? new DroneRecoveryConfig();
             _clock = clock ?? new UnityGameplayClock();
+
+            // The one event subscription this class holds — resetting its own internal counter
+            // reactively is not "writing course state" (see class remarks); _course is a
+            // permanent, session-lifetime instance (never rebound), so no unsubscription is
+            // needed, matching how this class already treats _course elsewhere.
+            if (_course != null)
+                _course.RaceStarted += HandleRaceStarted;
         }
+
+        private void HandleRaceStarted() => RecoveryCountThisRun = 0;
 
         /// <summary>
         /// Binds to a freshly generated world's bounds and start spawn. Always safe to call
@@ -80,6 +100,7 @@ namespace Sim.Gameplay
             _spawnPosition = spawnPosition;
             _spawnRotation = spawnRotation;
             State = DroneRecoveryState.Monitoring;
+            RecoveryCountThisRun = 0; // defensive — RaceStarted already resets this at the start of every real race, but a new world must never inherit a stale count from an abandoned one
         }
 
         /// <summary>
@@ -91,6 +112,7 @@ namespace Sim.Gameplay
         {
             _bounds = null;
             State = DroneRecoveryState.Monitoring;
+            RecoveryCountThisRun = 0;
         }
 
         /// <summary>
@@ -202,6 +224,7 @@ namespace Sim.Gameplay
             // and returning to the spawn orientation exactly like any other reset. Checkpoint
             // progress (CurrentCheckpointIndex) is never touched here — only the drone moves.
             _spawnTarget.PlaceAt(_spawnPosition, _spawnRotation);
+            RecoveryCountThisRun++;
 
             State = DroneRecoveryState.Cooldown;
             _cooldownStartedAtSeconds = _clock.NowSeconds;
